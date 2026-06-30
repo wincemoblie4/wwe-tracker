@@ -1030,6 +1030,8 @@ function CloudSaveModal({onClose,activeSlot,setActiveSlot,state,setState,setUnsa
   const [loading,setLoading]=useState(false);
   const [slotPasswords,setSlotPasswords]=useState({});
   const [overwritePending,setOverwritePending]=useState(null);
+  const [backups,setBackups]=useState([]);
+  const [backupsLoading,setBackupsLoading]=useState(false);
 
   const setSlotPass=(key,val)=>setSlotPasswords(p=>({...p,[key]:val}));
 
@@ -1063,7 +1065,55 @@ function CloudSaveModal({onClose,activeSlot,setActiveSlot,state,setState,setUnsa
     setLoading(false);
   };
 
+  const fetchBackups=async()=>{
+    setBackupsLoading(true);
+    try{
+      const res=await storage.list("backup:",true);
+      const keys=res?.keys||[];
+      const list=[];
+      for(const key of keys){
+        try{
+          const r=await storage.get(key,true);
+          if(r){
+            const snap=JSON.parse(r.value);
+            list.push({
+              key,
+              saveName:snap.name||key,
+              savedAt:snap.savedAt,
+              wrestlers:snap.wrestlers||0,shows:snap.shows||0,matches:snap.matches||0,
+              snapshot:snap
+            });
+          }
+        }catch{}
+      }
+      list.sort((a,b)=>new Date(b.savedAt)-new Date(a.savedAt));
+      setBackups(list);
+    }catch{addToast("Couldn't load backups","error");}
+    setBackupsLoading(false);
+  };
+
+  const restoreBackup=async(backup)=>{
+    setBackupsLoading(true);
+    try{
+      const targetKey="save:"+backup.saveName.trim().toLowerCase().replace(/[^a-z0-9]+/g,"-");
+      // Snapshot whatever is currently live before restoring, so this is reversible too
+      try{
+        const current=await storage.get(targetKey,true);
+        if(current){
+          const backupKey="backup:"+targetKey+":"+Date.now();
+          await storage.set(backupKey,current.value,true);
+        }
+      }catch{}
+      await storage.set(targetKey,JSON.stringify(backup.snapshot),true);
+      addToast(`Restored "${backup.saveName}" from backup!`,"success");
+      await fetchSlots();
+      await fetchBackups();
+    }catch{addToast("Restore failed","error");}
+    setBackupsLoading(false);
+  };
+
   useEffect(()=>{fetchSlots();},[]);
+  useEffect(()=>{if(tab==="recover")fetchBackups();},[tab]);
 
   const doSave=async(name,password,force=false)=>{
     if(!name.trim()){addToast("Enter a save name","error");return;}
@@ -1079,6 +1129,14 @@ function CloudSaveModal({onClose,activeSlot,setActiveSlot,state,setState,setUnsa
       setLoading(false);
       setOverwritePending({name:name.trim(),password,key});
       return;
+    }
+    // Safety net: if we're about to overwrite an existing save, snapshot the
+    // old version first under a hidden backup key, so it can be recovered.
+    if(existing&&force){
+      try{
+        const backupKey="backup:"+key+":"+Date.now();
+        await storage.set(backupKey,JSON.stringify(existing),true);
+      }catch{ /* backup failing shouldn't block the save itself */ }
     }
     const passwordHash=password?await simpleHash(password):(force&&existing?.passwordHash?existing.passwordHash:"");
     const payload={
@@ -1119,15 +1177,23 @@ function CloudSaveModal({onClose,activeSlot,setActiveSlot,state,setState,setUnsa
     setLoading(true);
     try{
       const r=await storage.get(slot.key,true);
+      let payload=null;
       if(r){
-        const payload=JSON.parse(r.value);
+        payload=JSON.parse(r.value);
         if(payload.passwordHash){
           const ph=await simpleHash(password);
           if(ph!==payload.passwordHash){addToast("Wrong password","error");setLoading(false);return;}
         }
       }
+      // Safety net: back up before deleting, so it can be recovered
+      if(payload){
+        try{
+          const backupKey="backup:"+slot.key+":"+Date.now();
+          await storage.set(backupKey,JSON.stringify(payload),true);
+        }catch{}
+      }
       await storage.delete(slot.key,true);
-      addToast("Save deleted","success");
+      addToast("Save deleted (a backup was kept — see the Recover tab)","success");
       await fetchSlots();
     }catch{addToast("Delete failed","error");}
     setLoading(false);
@@ -1148,11 +1214,11 @@ function CloudSaveModal({onClose,activeSlot,setActiveSlot,state,setState,setUnsa
   return(
     <Modal title="Cloud Saves" onClose={onClose} maxWidth={560}>
       <div style={{display:"flex",borderRadius:6,overflow:"hidden",border:"1px solid var(--border)",marginBottom:20}}>
-        {[{id:"save",label:"Save",icon:"fa-cloud-arrow-up"},{id:"load",label:"Load / Browse",icon:"fa-cloud-arrow-down"}].map(t=>(
+        {[{id:"save",label:"Save",icon:"fa-cloud-arrow-up"},{id:"load",label:"Load",icon:"fa-cloud-arrow-down"},{id:"recover",label:"Recover",icon:"fa-clock-rotate-left"}].map(t=>(
           <button key={t.id} type="button" onClick={()=>setTab(t.id)}
-            style={{flex:1,padding:"10px 16px",border:"none",background:tab===t.id?"var(--primary)":"var(--bg-input)",
-              color:tab===t.id?"#fff":"var(--text-secondary)",fontFamily:"Teko,sans-serif",fontSize:17,fontWeight:600,
-              textTransform:"uppercase",cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",gap:8}}>
+            style={{flex:1,padding:"10px 10px",border:"none",background:tab===t.id?"var(--primary)":"var(--bg-input)",
+              color:tab===t.id?"#fff":"var(--text-secondary)",fontFamily:"Teko,sans-serif",fontSize:15,fontWeight:600,
+              textTransform:"uppercase",cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",gap:6}}>
             <i className={`fas ${t.icon}`}/> {t.label}
           </button>
         ))}
@@ -1238,6 +1304,50 @@ function CloudSaveModal({onClose,activeSlot,setActiveSlot,state,setState,setUnsa
                     <i className="fas fa-trash"/>
                   </button>
                 </div>
+              </div>
+            ))}
+          </div>}
+        </div>
+      )}
+
+      {tab==="recover"&&(
+        <div>
+          <div style={{padding:"10px 14px",background:"rgba(34,197,94,0.08)",border:"1px solid rgba(34,197,94,0.2)",borderRadius:6,marginBottom:14,fontSize:13,color:"var(--text-secondary)",lineHeight:1.5}}>
+            <i className="fas fa-shield-halved" style={{color:"var(--success)",marginRight:6}}/>
+            Every time a save is overwritten, the previous version is automatically backed up here. If someone accidentally overwrote a save, find it below and restore it.
+          </div>
+          <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:12}}>
+            <p style={{fontSize:13,color:"var(--text-muted)"}}>Backups by save name.</p>
+            <button className="btn btn-secondary btn-sm" onClick={fetchBackups} disabled={backupsLoading}>
+              <i className="fas fa-rotate"/> Refresh
+            </button>
+          </div>
+          {backupsLoading&&<div style={{textAlign:"center",padding:32,color:"var(--text-muted)"}}>
+            <i className="fas fa-spinner fa-spin" style={{fontSize:28,display:"block",marginBottom:10}}/>Loading backups...
+          </div>}
+          {!backupsLoading&&backups.length===0&&<div style={{textAlign:"center",padding:32,color:"var(--text-muted)"}}>
+            <i className="fas fa-clock-rotate-left" style={{fontSize:40,opacity:0.2,display:"block",marginBottom:10}}/>
+            <p>No backups yet — they appear here automatically whenever a save gets overwritten.</p>
+          </div>}
+          {!backupsLoading&&backups.length>0&&<div style={{display:"flex",flexDirection:"column",gap:8,maxHeight:400,overflowY:"auto",paddingRight:2}}>
+            {backups.map(b=>(
+              <div key={b.key} style={{background:"var(--bg-input)",borderRadius:8,border:"1px solid var(--border)",padding:"12px 14px"}}>
+                <div style={{fontFamily:"Teko,sans-serif",fontSize:18,fontWeight:700,textTransform:"uppercase",lineHeight:1,marginBottom:4}}>
+                  {b.saveName}
+                </div>
+                <div style={{fontSize:11,color:"var(--text-muted)",marginBottom:8}}>
+                  Backed up {fmtDate(b.savedAt)}
+                  {" · "}{b.wrestlers} wrestlers
+                  {" · "}{b.shows} shows
+                  {" · "}{b.matches} matches
+                </div>
+                <button className="btn btn-primary btn-sm" style={{width:"100%"}} disabled={backupsLoading}
+                  onClick={()=>setConfirm({
+                    msg:`Restore this backup of <strong>"${b.saveName}"</strong>? This will overwrite the current "${b.saveName}" save with this older version.`,
+                    fn:()=>restoreBackup(b)
+                  })}>
+                  <i className="fas fa-clock-rotate-left"/> Restore This Version
+                </button>
               </div>
             ))}
           </div>}
