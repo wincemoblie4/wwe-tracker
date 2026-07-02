@@ -13,7 +13,6 @@ function useExternalCSS(href){
 
 // ─── Utility ────────────────────────────────────────────────────────────────
 const uid = () => Date.now().toString(36) + Math.random().toString(36).slice(2,8);
-const esc = (s="") => String(s);
 const fmtDate = (d) => {
   if (!d) return "";
   return new Date(d).toLocaleDateString("en-US",{month:"short",day:"numeric",year:"numeric"});
@@ -1357,8 +1356,41 @@ function CloudSaveModal({onClose,activeSlot,setActiveSlot,state,setState,setUnsa
   );
 }
 
+// ─── Edit Mode Password Modal ─────────────────────────────────────────────────
+// Change EDIT_PASSWORD below to whatever password you want people to use
+// to unlock editing. Keep it simple — it's not high security, just a
+// deterrent against accidental changes.
+const EDIT_PASSWORD = "wwe2k26";
+
+function EditPasswordModal({onUnlock,onClose}){
+  const [input,setInput]=useState("");
+  const [error,setError]=useState(false);
+  const attempt=()=>{
+    if(input===EDIT_PASSWORD){onUnlock();onClose();}
+    else{setError(true);setInput("");}
+  };
+  return(
+    <Modal title="Enter Edit Password" onClose={onClose} maxWidth={380}
+      footer={<><button className="btn btn-secondary" onClick={onClose}>Cancel</button><button className="btn btn-primary" onClick={attempt}><i className="fas fa-unlock"/> Unlock</button></>}>
+      <p style={{fontSize:14,color:"var(--text-secondary)",marginBottom:16,lineHeight:1.5}}>
+        This tracker is in <strong>view-only mode</strong> by default. Enter the edit password to add, edit, or delete anything.
+      </p>
+      <div className="form-group">
+        <label className="form-label">Password</label>
+        <input autoFocus className="form-input" type="password" value={input}
+          onChange={e=>{setInput(e.target.value);setError(false);}}
+          onKeyDown={e=>{if(e.key==="Enter")attempt();}}
+          placeholder="Enter password..."
+          style={{borderColor:error?"var(--error)":undefined}}/>
+        {error&&<div className="form-hint" style={{color:"var(--error)",marginTop:6}}><i className="fas fa-circle-xmark"/> Incorrect password — try again.</div>}
+      </div>
+    </Modal>
+  );
+}
+
 // ─── Main App ─────────────────────────────────────────────────────────────────
 export default function App(){
+  // Only inject fonts/icons if index.html hasn't already loaded them (e.g. when used as a standalone artifact)
   useExternalCSS("https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css");
   useExternalCSS("https://fonts.googleapis.com/css2?family=Teko:wght@400;500;600;700&family=Outfit:wght@300;400;500;600;700&display=swap");
   const [state,setState]=useState(INIT_STATE);
@@ -1366,6 +1398,8 @@ export default function App(){
   const [modal,setModal]=useState(null);// {type, data}
   const [confirm,setConfirm]=useState(null);
   const [unsaved,setUnsaved]=useState(false);
+  const [editMode,setEditMode]=useState(false);
+  const [editPasswordModal,setEditPasswordModal]=useState(false);
   const [toasts,addToast]=useToasts();
   const [rosterSearch,setRosterSearch]=useState("");
   const [rosterShowFilter,setRosterShowFilter]=useState("");
@@ -1381,8 +1415,6 @@ export default function App(){
   // ── Helpers ─────────────────────────────────────────────────────────────────
   const wName=(id)=>(state.wrestlers.find(w=>w.id===id)||{}).name||"Unknown";
   const tName=(id)=>(state.tagTeams.find(t=>t.id===id)||{}).name||"Unknown";
-  const sName=(id)=>(state.shows.find(s=>s.id===id)||{}).name||"";
-  const sColor=(id)=>(state.shows.find(s=>s.id===id)||{}).color||"#666";
 
   // ── CRUD ─────────────────────────────────────────────────────────────────────
   const saveWrestler=(id,data)=>{
@@ -1596,7 +1628,7 @@ export default function App(){
 
 
   // ── Match card render ────────────────────────────────────────────────────────
-  const MatchCard=({m})=>{
+  const MatchCard=({m,editMode})=>{
     const show=state.shows.find(s=>s.id===m.showId);
     const mt=state.matchTypes.find(t=>t.id===m.matchType)||{name:m.matchType,isTag:false};
     const isTitle=m.isChampionshipMatch;
@@ -1625,8 +1657,8 @@ export default function App(){
             <span className={`match-type-badge${isTitle?" championship":""}`}>
               {isTitle?<><i className="fas fa-trophy"/> {champ?.name||"Title"}</>:mt.name}
             </span>
-            <button className="card-action-btn" onClick={()=>setModal({type:"match",data:m})}><i className="fas fa-pen"/></button>
-            <button className="card-action-btn delete" onClick={()=>setConfirm({msg:"Delete this match?",fn:()=>deleteMatch(m.id)})}><i className="fas fa-trash"/></button>
+            {editMode&&<><button className="card-action-btn" onClick={()=>setModal({type:"match",data:m})}><i className="fas fa-pen"/></button>
+            <button className="card-action-btn delete" onClick={()=>setConfirm({msg:"Delete this match?",fn:()=>deleteMatch(m.id)})}><i className="fas fa-trash"/></button></>}
           </div>
         </div>
         <div style={{display:"flex",alignItems:"center",gap:8,flexWrap:"wrap",fontFamily:"Teko,sans-serif",fontSize:19,fontWeight:500,textTransform:"uppercase"}}>
@@ -1653,7 +1685,7 @@ export default function App(){
   // ── Views ────────────────────────────────────────────────────────────────────
   const ranked=[...state.wrestlers].sort((a,b)=>getPowerRating(b.id,state)-getPowerRating(a.id,state));
 
-  const Dashboard=()=>{
+  const Dashboard=({editMode})=>{
     const recentMatches=[...state.matches].sort((a,b)=>new Date(b.date)-new Date(a.date)).slice(0,5);
     const top5=ranked.slice(0,5);
     const champCards=state.championships.filter(c=>c.type!=="mitb");
@@ -1719,14 +1751,14 @@ export default function App(){
         </div>}
         {recentMatches.length>0&&<div className="dash-section">
           <div className="dash-section-title"><i className="fas fa-bolt"/> Recent Matches</div>
-          <div className="match-list">{recentMatches.map(m=><MatchCard key={m.id} m={m}/>)}</div>
+          <div className="match-list">{recentMatches.map(m=><MatchCard key={m.id} m={m} editMode={editMode}/>)}</div>
         </div>}
-        {!state.wrestlers.length&&!state.matches.length&&<div className="empty-state"><i className="fas fa-dumbbell"/><p>Welcome to your WWE 2K26 Tracker!<br/>Start by adding shows and wrestlers.</p><button className="btn btn-primary" onClick={()=>setView("shows")}><i className="fas fa-plus"/> Add Your First Show</button></div>}
+        {!state.wrestlers.length&&!state.matches.length&&<div className="empty-state"><i className="fas fa-dumbbell"/><p>Welcome to your WWE 2K26 Tracker!<br/>{editMode?"Start by adding shows and wrestlers.":"Unlock editing to start adding data."}</p>{editMode&&<button className="btn btn-primary" onClick={()=>setView("shows")}><i className="fas fa-plus"/> Add Your First Show</button>}</div>}
       </div>
     );
   };
 
-  const Roster=()=>{
+  const Roster=({editMode})=>{
     const weekly=state.shows.filter(s=>(s.showType||"weekly")==="weekly");
     const list=state.wrestlers.filter(w=>{
       if(rosterSearch&&!w.name.toLowerCase().includes(rosterSearch.toLowerCase())&&!(w.nickname||"").toLowerCase().includes(rosterSearch.toLowerCase()))return false;
@@ -1735,7 +1767,7 @@ export default function App(){
     });
     return(
       <div>
-        <div className="section-header"><div className="section-title">Roster <span className="count">({state.wrestlers.length})</span></div><button className="btn btn-primary" onClick={()=>setModal({type:"wrestler",data:null})}><i className="fas fa-plus"/> Add Wrestler</button></div>
+        <div className="section-header"><div className="section-title">Roster <span className="count">({state.wrestlers.length})</span></div>{editMode&&<button className="btn btn-primary" onClick={()=>setModal({type:"wrestler",data:null})}><i className="fas fa-plus"/> Add Wrestler</button>}</div>
         <div className="filter-bar">
           <div className="search-box"><i className="fas fa-search"/><input type="text" placeholder="Search wrestlers..." value={rosterSearch} onChange={e=>setRosterSearch(e.target.value)}/></div>
           <select className="filter-select" value={rosterShowFilter} onChange={e=>setRosterShowFilter(e.target.value)}>
@@ -1753,10 +1785,10 @@ export default function App(){
                   <div className="card-avatar">{w.image?<img src={w.image} alt="" style={{width:"100%",height:"100%",objectFit:"cover"}}/>:<span className="card-avatar-placeholder"><i className="fas fa-user"/></span>}</div>
                   <div style={{minWidth:0}}><div className="card-name">{w.name}</div>{w.nickname&&<div className="card-nickname">"{w.nickname}"</div>}</div>
                 </div>
-                <div className="card-actions">
+                {editMode&&<div className="card-actions">
                   <button onClick={e=>{e.stopPropagation();setModal({type:"wrestler",data:w});}}><i className="fas fa-pen"/></button>
                   <button className="delete-btn" onClick={e=>{e.stopPropagation();setConfirm({msg:`Delete <strong>${w.name}</strong>?`,fn:()=>deleteWrestler(w.id)});}}><i className="fas fa-trash"/></button>
-                </div>
+                </div>}
               </div>
               {show&&<div className="card-stat"><span style={{width:10,height:10,borderRadius:"50%",background:show.color,display:"inline-block"}}/> {show.name}</div>}
               <div className="win-loss"><span className="wins">{rec.wins}W</span><span className="losses">{rec.losses}L</span><span style={{color:"var(--text-muted)"}}>{winPct}%</span></div>
@@ -1769,7 +1801,7 @@ export default function App(){
     );
   };
 
-  const Shows=()=>{
+  const Shows=({editMode})=>{
     let list=[...state.shows];
     if(showTypeFilter)list=list.filter(s=>(s.showType||"weekly")===showTypeFilter);
     list.sort((a,b)=>{const aP=(a.showType||"weekly")==="ple"?1:0;const bP=(b.showType||"weekly")==="ple"?1:0;if(aP!==bP)return bP-aP;if(aP&&bP&&a.pleDate&&b.pleDate)return new Date(b.pleDate)-new Date(a.pleDate);return 0;});
@@ -1777,7 +1809,7 @@ export default function App(){
     const pCount=state.shows.filter(s=>s.showType==="ple").length;
     return(
       <div>
-        <div className="section-header"><div className="section-title">Shows <span className="count">({state.shows.length})</span></div><button className="btn btn-primary" onClick={()=>setModal({type:"show",data:null})}><i className="fas fa-plus"/> Add Show / PLE</button></div>
+        <div className="section-header"><div className="section-title">Shows <span className="count">({state.shows.length})</span></div>{editMode&&<button className="btn btn-primary" onClick={()=>setModal({type:"show",data:null})}><i className="fas fa-plus"/> Add Show / PLE</button>}</div>
         <div className="filter-bar">
           <div style={{display:"flex",flexWrap:"wrap",gap:6}}>
             {[{v:"",l:`All (${state.shows.length})`},{v:"weekly",l:`Weekly (${wCount})`},{v:"ple",l:`PLEs (${pCount})`}].map(({v,l})=>(
@@ -1806,10 +1838,10 @@ export default function App(){
                     {!isPLE&&s.day&&<div className="card-stat" style={{marginTop:0}}><i className="fas fa-calendar"/> {s.day}</div>}
                   </div>
                 </div>
-                <div className="card-actions">
+                {editMode&&<div className="card-actions">
                   <button onClick={()=>setModal({type:"show",data:s})}><i className="fas fa-pen"/></button>
                   <button className="delete-btn" onClick={()=>setConfirm({msg:`Delete <strong>${s.name}</strong>?`,fn:()=>deleteShow(s.id)})}><i className="fas fa-trash"/></button>
-                </div>
+                </div>}
               </div>
               {isPLE?(linked.length>0?<><div style={{fontSize:11,color:"var(--text-muted)",textTransform:"uppercase",letterSpacing:"0.5px",marginTop:10,marginBottom:4}}><i className="fas fa-tv"/> Featured Shows</div>
                 <div style={{display:"flex",flexWrap:"wrap",gap:6}}>{linked.map(ls=><span key={ls.id} style={{display:"inline-flex",alignItems:"center",gap:5,padding:"4px 10px",borderRadius:20,fontSize:12,fontWeight:600,background:"var(--bg-input)",border:"1px solid var(--border)"}}><span style={{width:8,height:8,borderRadius:"50%",background:ls.color,display:"inline-block"}}/>{ls.name}</span>)}</div></>
@@ -1825,7 +1857,7 @@ export default function App(){
     );
   };
 
-  const TagTeams=()=>{
+  const TagTeams=({editMode})=>{
     const tagCount=state.tagTeams.filter(t=>getGroupMembers(t).length<=2).length;
     const trioCount=state.tagTeams.filter(t=>getGroupMembers(t).length===3).length;
     const stableCount=state.tagTeams.filter(t=>getGroupMembers(t).length>=4).length;
@@ -1845,7 +1877,7 @@ export default function App(){
       <div>
         <div className="section-header">
           <div className="section-title">Groups <span className="count">({state.tagTeams.length})</span></div>
-          <button className="btn btn-primary" onClick={()=>setModal({type:"tagTeam",data:null})}><i className="fas fa-plus"/> Add Group</button>
+          {editMode&&<button className="btn btn-primary" onClick={()=>setModal({type:"tagTeam",data:null})}><i className="fas fa-plus"/> Add Group</button>}
         </div>
         <div className="filter-bar">
           <div className="search-box"><i className="fas fa-search"/><input type="text" placeholder="Search groups..." value={tagSearch} onChange={e=>setTagSearch(e.target.value)}/></div>
@@ -1871,10 +1903,10 @@ export default function App(){
                   </div>
                   <div className="card-name">{t.name}</div>
                 </div>
-                <div className="card-actions">
+                {editMode&&<div className="card-actions">
                   <button onClick={()=>setModal({type:"tagTeam",data:t})}><i className="fas fa-pen"/></button>
                   <button className="delete-btn" onClick={()=>setConfirm({msg:`Delete <strong>${t.name}</strong>?`,fn:()=>deleteTagTeam(t.id)})}><i className="fas fa-trash"/></button>
-                </div>
+                </div>}
               </div>
               <div style={{display:"flex",flexWrap:"wrap",gap:4,marginTop:4}}>
                 {mids.map((mid,i)=>(
@@ -1894,9 +1926,9 @@ export default function App(){
     );
   };
 
-  const Championships=()=>(
+  const Championships=({editMode})=>(
     <div>
-      <div className="section-header"><div className="section-title">Championships <span className="count">({state.championships.length})</span></div><button className="btn btn-primary" onClick={()=>setModal({type:"championship",data:null})}><i className="fas fa-plus"/> Add Championship</button></div>
+      <div className="section-header"><div className="section-title">Championships <span className="count">({state.championships.length})</span></div>{editMode&&<button className="btn btn-primary" onClick={()=>setModal({type:"championship",data:null})}><i className="fas fa-plus"/> Add Championship</button>}</div>
       {state.championships.length?<div className="card-grid">
         {state.championships.map(c=>{
           const isMITB=c.type==="mitb";const isTag=c.type==="tag";
@@ -1914,10 +1946,10 @@ export default function App(){
                   </div>
                 </div>
               </div>
-              <div className="card-actions">
+              {editMode&&<div className="card-actions">
                 <button onClick={e=>{e.stopPropagation();setModal({type:"championship",data:c});}}><i className="fas fa-pen"/></button>
                 <button className="delete-btn" onClick={e=>{e.stopPropagation();setConfirm({msg:`Delete <strong>${c.name}</strong>?`,fn:()=>deleteChampionship(c.id)});}}><i className="fas fa-trash"/></button>
-              </div>
+              </div>}
             </div>
             {c.image&&<div style={{width:"100%",padding:"16px 0",display:"flex",justifyContent:"center",alignItems:"center",background:isMITB?"linear-gradient(135deg,rgba(34,197,94,0.08),rgba(22,163,74,0.04))":"linear-gradient(135deg,rgba(255,215,0,0.08),rgba(229,26,44,0.06))",borderRadius:6,marginTop:8,border:`1px solid ${isMITB?"rgba(34,197,94,0.15)":"rgba(255,215,0,0.15)"}`}}>
               <img src={c.image} alt={c.name} style={{maxWidth:140,maxHeight:100,objectFit:"contain"}}/>
@@ -1928,7 +1960,7 @@ export default function App(){
                 <div style={{fontFamily:"Teko,sans-serif",fontSize:20,fontWeight:600,textTransform:"uppercase"}}>{c.currentHolderId?holderName:<span style={{color:"var(--text-muted)",fontStyle:"italic"}}>{isMITB?"Unclaimed":"Vacant"}</span>}</div>
                 {!isMITB&&c.currentHolderId&&<div style={{fontSize:13,color:"var(--accent)",fontWeight:600}}><i className="fas fa-shield-halved"/> {c.defenses} defense{c.defenses!==1?"s":""}</div>}
               </div>
-              {isMITB&&c.currentHolderId&&<button className="btn-cashin" onClick={e=>{e.stopPropagation();setModal({type:"cashIn",data:c});}}><i className="fas fa-bolt"/> Cash In</button>}
+              {isMITB&&c.currentHolderId&&editMode&&<button className="btn-cashin" onClick={e=>{e.stopPropagation();setModal({type:"cashIn",data:c});}}><i className="fas fa-bolt"/> Cash In</button>}
             </div>
           </div>);
         })}
@@ -1936,7 +1968,7 @@ export default function App(){
     </div>
   );
 
-  const Matches=()=>{
+  const Matches=({editMode})=>{
     let list=[...state.matches].sort((a,b)=>new Date(b.date)-new Date(a.date));
     if(matchSearch){list=list.filter(m=>{
       const names=m.wrestlers.map(id=>wName(id).toLowerCase());
@@ -1948,10 +1980,10 @@ export default function App(){
     return(
       <div>
         <div className="section-header"><div className="section-title">Matches <span className="count">({state.matches.length})</span></div>
-          <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
+          {editMode&&<div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
             <button className="btn btn-secondary btn-sm" onClick={()=>setModal({type:"matchTypes",data:null})}><i className="fas fa-gear"/> Match Types</button>
             <button className="btn btn-primary" onClick={()=>setModal({type:"match",data:null})}><i className="fas fa-plus"/> Record Match</button>
-          </div>
+          </div>}
         </div>
         <div className="filter-bar">
           <div className="search-box"><i className="fas fa-search"/><input type="text" placeholder="Search by wrestler or team..." value={matchSearch} onChange={e=>setMatchSearch(e.target.value)}/></div>
@@ -1960,12 +1992,12 @@ export default function App(){
             {state.shows.map(s=><option key={s.id} value={s.id}>{s.name}</option>)}
           </select>
         </div>
-        {list.length?<div className="match-list">{list.map(m=><MatchCard key={m.id} m={m}/>)}</div>:<div className="empty-state"><i className="fas fa-bolt"/><p>No matches recorded yet.</p></div>}
+        {list.length?<div className="match-list">{list.map(m=><MatchCard key={m.id} m={m} editMode={editMode}/>)}</div>:<div className="empty-state"><i className="fas fa-bolt"/><p>No matches recorded yet.</p></div>}
       </div>
     );
   };
 
-  const Rankings=()=>(
+  const Rankings=({editMode})=>(
     <div>
       <div className="section-header"><div className="section-title">Power Rankings</div></div>
       {ranked.length?<div className="ranking-list">
@@ -2151,9 +2183,21 @@ export default function App(){
           <div className="app-logo-text"><span style={{color:"var(--primary)"}}>WWE</span> 2K26 Tracker</div>
         </div>
         <div className="header-actions">
+          {/* Edit mode indicator + toggle */}
+          <button
+            onClick={()=>editMode?setEditMode(false):setEditPasswordModal(true)}
+            title={editMode?"Switch back to view-only mode":"Unlock editing"}
+            style={{display:"flex",alignItems:"center",gap:6,padding:"6px 12px",borderRadius:"var(--radius-sm)",
+              border:`1px solid ${editMode?"var(--success)":"var(--border)"}`,
+              background:editMode?"rgba(34,197,94,0.1)":"var(--bg-card)",
+              color:editMode?"var(--success)":"var(--text-muted)",
+              cursor:"pointer",fontSize:13,fontFamily:"Outfit,sans-serif",fontWeight:600,transition:"all 0.2s"}}>
+            <i className={`fas ${editMode?"fa-lock-open":"fa-lock"}`}/>
+            {editMode?"Editing":"View Only"}
+          </button>
           {activeSlot&&<span style={{fontSize:12,color:"var(--text-muted)",maxWidth:120,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",display:"none"}} className="active-slot-label">📁 {activeSlot}</span>}
           <button className={`btn-save${unsaved?" unsaved":""}`} onClick={()=>setCloudModal(true)}>
-            <i className="fas fa-cloud"/> {activeSlot?unsaved?"Unsaved!":"Cloud Saves":"Cloud Saves"}
+            <i className="fas fa-cloud"/> {editMode?(activeSlot?unsaved?"Unsaved!":"Cloud Saves":"Cloud Saves"):"Load Save"}
           </button>
           <input type="file" ref={importRef} accept=".json" style={{display:"none"}} onChange={importData}/>
         </div>
@@ -2174,14 +2218,17 @@ export default function App(){
       </nav>
 
       <main className="main-content" style={!isSupabaseConfigured?{marginTop:132}:undefined}>
-        {view==="dashboard"&&<Dashboard/>}
-        {view==="roster"&&<Roster/>}
-        {view==="shows"&&<Shows/>}
-        {view==="tag-teams"&&<TagTeams/>}
-        {view==="championships"&&<Championships/>}
-        {view==="matches"&&<Matches/>}
-        {view==="rankings"&&<Rankings/>}
+        {view==="dashboard"&&<Dashboard editMode={editMode}/>}
+        {view==="roster"&&<Roster editMode={editMode}/>}
+        {view==="shows"&&<Shows editMode={editMode}/>}
+        {view==="tag-teams"&&<TagTeams editMode={editMode}/>}
+        {view==="championships"&&<Championships editMode={editMode}/>}
+        {view==="matches"&&<Matches editMode={editMode}/>}
+        {view==="rankings"&&<Rankings editMode={editMode}/>}
       </main>
+
+      {/* Edit Password Modal */}
+      {editPasswordModal&&<EditPasswordModal onUnlock={()=>setEditMode(true)} onClose={()=>setEditPasswordModal(false)}/>}
 
       {/* Cloud Save Modal */}
       {cloudModal&&<CloudSaveModal
