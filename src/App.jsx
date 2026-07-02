@@ -64,7 +64,7 @@ function getTagRecord(teamId,matches){
 }
 function getRecentForm(wid,matches,count){
   const rel=matches.filter(m=>m.wrestlers.includes(wid))
-    .sort((a,b)=>new Date(b.date)-new Date(a.date)).slice(0,count);
+    .sort((a,b)=>{const d=new Date(b.date)-new Date(a.date);return d!==0?d:matches.indexOf(b)-matches.indexOf(a);}).slice(0,count);
   if(!rel.length)return 0;
   return rel.filter(m=>m.winnerIds.includes(wid)).length/rel.length;
 }
@@ -80,7 +80,7 @@ function getPowerRating(wid,state){
   return Math.min(Math.round(rec.pct*45+recent*20+(champs.length?18:0)+Math.min(defenses*3,12)+Math.min(rec.total*0.4,5)),100);
 }
 function getStreak(wid,matches){
-  const rel=matches.filter(m=>m.wrestlers.includes(wid)).sort((a,b)=>new Date(b.date)-new Date(a.date));
+  const rel=matches.filter(m=>m.wrestlers.includes(wid)).sort((a,b)=>{const d=new Date(b.date)-new Date(a.date);return d!==0?d:matches.indexOf(b)-matches.indexOf(a);});
   if(!rel.length)return 0;
   const firstIsWin=rel[0].winnerIds.includes(wid);
   let streak=0;
@@ -459,8 +459,12 @@ function MatchModal({match,state,onSave,onClose,toast}){
   const initSlots=()=>{
     if(!match)return[];
     const slots=[];
-    (match.tagTeamIds||[]).forEach(tid=>slots.push({kind:"group",groupId:tid,id:tid}));
-    (match.adhocTeams||[]).forEach(at=>slots.push({kind:"adhoc",id:at.id,label:at.label,memberIds:at.memberIds}));
+    (match.tagTeamIds||[]).forEach(tid=>{
+      // Find any activeMembers stored on the match for this slot
+      const am=(match.slotActiveMembers||{})[tid]||[];
+      slots.push({kind:"group",groupId:tid,id:tid,activeMembers:am});
+    });
+    (match.adhocTeams||[]).forEach(at=>slots.push({kind:"adhoc",id:at.id,label:at.label,memberIds:at.memberIds,activeMembers:[]}));
     return slots;
   };
   const [slots,setSlots]=useState(initSlots);
@@ -478,6 +482,16 @@ function MatchModal({match,state,onSave,onClose,toast}){
   const isTag=mt?.isTag;
 
   const slotMembers=(slot)=>{
+    // If activeMembers is set, use that subset — otherwise use all group members
+    if(slot.activeMembers&&slot.activeMembers.length>0)return slot.activeMembers;
+    if(slot.kind==="group"){
+      const t=state.tagTeams.find(x=>x.id===slot.groupId);
+      return t?getGroupMembers(t):[];
+    }
+    return slot.memberIds||[];
+  };
+  const slotAllMembers=(slot)=>{
+    // Always returns the full roster of the group/adhoc, ignoring activeMembers
     if(slot.kind==="group"){
       const t=state.tagTeams.find(x=>x.id===slot.groupId);
       return t?getGroupMembers(t):[];
@@ -493,6 +507,22 @@ function MatchModal({match,state,onSave,onClose,toast}){
     const set=new Set();
     slots.forEach(s=>{if(s.id!==excludeSlotId)slotMembers(s).forEach(m=>set.add(m));});
     return set;
+  };
+
+  const toggleSlotMember=(slotId,wid)=>{
+    setSlots(p=>p.map(s=>{
+      if(s.id!==slotId)return s;
+      const all=slotAllMembers(s);
+      const current=s.activeMembers&&s.activeMembers.length>0?s.activeMembers:[...all];
+      const next=current.includes(wid)
+        ?current.filter(x=>x!==wid)
+        :[...current,wid];
+      // Must keep at least 1 member
+      if(next.length<1)return s;
+      // If all members selected, clear activeMembers (means "all")
+      return {...s,activeMembers:next.length===all.length?[]:next};
+    }));
+    // If the winner was this slot, their winnerIds will update automatically via slotMembers
   };
 
   const toggleW=(id)=>{
@@ -541,12 +571,20 @@ function MatchModal({match,state,onSave,onClose,toast}){
 
   const save=()=>{
     if(!date){toast("Date required","error");return;}
-    let wrestlers=[],tagTeamIds=null,adhocTeams=null,winnerIds=[],winnerTagTeamId=null,winnerAdhocId=null;
+    let wrestlers=[],tagTeamIds=null,adhocTeams=null,winnerIds=[],winnerTagTeamId=null,winnerAdhocId=null,slotActiveMembers=null;
     if(isTag){
       if(slots.length<(mt?.participants||2)){toast("Add "+mt?.participants+" teams to this match","error");return;}
       if(!winnerSlotId){toast("Select a winner","error");return;}
+      // Validate every slot has at least 1 active member
+      for(const s of slots){
+        if(slotMembers(s).length<1){toast(`"${slotName(s)}" has no competing members selected — pick at least 1`,"error");return;}
+      }
       tagTeamIds=slots.filter(s=>s.kind==="group").map(s=>s.groupId);
       adhocTeams=slots.filter(s=>s.kind==="adhoc").map(s=>({id:s.id,label:s.label,memberIds:s.memberIds}));
+      // Build slotActiveMembers map so we can restore selections when editing
+      slotActiveMembers={};
+      slots.forEach(s=>{if(s.kind==="group"&&s.activeMembers&&s.activeMembers.length>0)slotActiveMembers[s.groupId]=s.activeMembers;});
+      // Only include actually-competing members in the wrestlers array
       slots.forEach(s=>wrestlers.push(...slotMembers(s)));
       // Final safety check: no wrestler should appear in more than one slot
       const seen=new Set();
@@ -570,7 +608,7 @@ function MatchModal({match,state,onSave,onClose,toast}){
       wrestlers=[...selWrestlers];winnerIds=[winnerId];
     }
     if(isChamp&&!champId){toast("Select a championship","error");return;}
-    onSave({date,showId,matchType,wrestlers,tagTeamIds,adhocTeams,winnerIds,winnerTagTeamId,winnerAdhocId,isChampionshipMatch:isChamp,championshipId:isChamp?champId:"",notes});
+    onSave({date,showId,matchType,wrestlers,tagTeamIds,adhocTeams,slotActiveMembers:slotActiveMembers||undefined,winnerIds,winnerTagTeamId,winnerAdhocId,isChampionshipMatch:isChamp,championshipId:isChamp?champId:"",notes});
     onClose();
   };
 
@@ -604,25 +642,56 @@ function MatchModal({match,state,onSave,onClose,toast}){
           {/* Current slots */}
           {slots.length>0&&<div style={{display:"flex",flexDirection:"column",gap:8,marginBottom:12}}>
             {slots.map(slot=>{
-              const mids=slotMembers(slot);
+              const allMids=slotAllMembers(slot);
+              const activeMids=slotMembers(slot);
               const isWinner=winnerSlotId===slot.id;
+              const isLargeGroup=allMids.length>2;
               return(
-                <div key={slot.id} style={{display:"flex",alignItems:"center",gap:10,padding:"10px 12px",background:isWinner?"rgba(34,197,94,0.08)":"var(--bg-input)",borderRadius:6,border:`1px solid ${isWinner?"var(--success)":"var(--border)"}`}}>
-                  <div style={{flex:1,minWidth:0}}>
-                    <div style={{fontWeight:700,fontSize:14,display:"flex",alignItems:"center",gap:6}}>
-                      {slot.kind==="adhoc"&&<i className="fas fa-link-slash" style={{fontSize:11,color:"var(--text-muted)"}} title="Ad-hoc team (not a saved group)"/>}
-                      {slotName(slot)}
-                      {isWinner&&<span style={{fontSize:10,fontWeight:700,textTransform:"uppercase",padding:"1px 6px",borderRadius:3,background:"var(--success)",color:"#fff"}}>Winner</span>}
+                <div key={slot.id} style={{background:isWinner?"rgba(34,197,94,0.08)":"var(--bg-input)",borderRadius:8,border:`1px solid ${isWinner?"var(--success)":"var(--border)"}`,overflow:"hidden"}}>
+                  {/* Slot header */}
+                  <div style={{display:"flex",alignItems:"center",gap:10,padding:"10px 12px"}}>
+                    <div style={{flex:1,minWidth:0}}>
+                      <div style={{fontWeight:700,fontSize:14,display:"flex",alignItems:"center",gap:6}}>
+                        {slot.kind==="adhoc"&&<i className="fas fa-link-slash" style={{fontSize:11,color:"var(--text-muted)"}} title="Ad-hoc team"/>}
+                        {slotName(slot)}
+                        {isWinner&&<span style={{fontSize:10,fontWeight:700,textTransform:"uppercase",padding:"1px 6px",borderRadius:3,background:"var(--success)",color:"#fff"}}>Winner</span>}
+                      </div>
+                      <div style={{fontSize:12,color:"var(--text-muted)",marginTop:2}}>
+                        {activeMids.map(mid=>wName2(mid,state)).join(", ")||"No members selected"}
+                        {isLargeGroup&&<span style={{marginLeft:6,color:"var(--accent)",fontWeight:600}}>({activeMids.length}/{allMids.length} competing)</span>}
+                      </div>
                     </div>
-                    <div style={{fontSize:12,color:"var(--text-muted)"}}>{mids.map(mid=>wName2(mid,state)).join(", ")||"No members"}</div>
+                    <button type="button" className="btn btn-secondary btn-sm" onClick={()=>{
+                        if(isChamp&&slot.kind==="adhoc"){toast("Ad-hoc teams can't hold championships — pick a saved Group as the winner","error");return;}
+                        setWinnerSlotId(slot.id);
+                      }} disabled={isWinner}>
+                      {isWinner?<i className="fas fa-check"/>:"Set Winner"}
+                    </button>
+                    <button type="button" className="card-action-btn delete" onClick={()=>removeSlot(slot.id)}><i className="fas fa-trash"/></button>
                   </div>
-                  <button type="button" className="btn btn-secondary btn-sm" onClick={()=>{
-                      if(isChamp&&slot.kind==="adhoc"){toast("Ad-hoc teams can't hold championships — pick a saved Group as the winner","error");return;}
-                      setWinnerSlotId(slot.id);
-                    }} disabled={isWinner}>
-                    {isWinner?<i className="fas fa-check"/>:"Set Winner"}
-                  </button>
-                  <button type="button" className="card-action-btn delete" onClick={()=>removeSlot(slot.id)}><i className="fas fa-trash"/></button>
+                  {/* Member picker — only shown for trios/stables (more than 2 members) */}
+                  {isLargeGroup&&(
+                    <div style={{padding:"8px 12px 12px",borderTop:"1px solid var(--border)",background:"var(--bg-deep)"}}>
+                      <div style={{fontSize:11,color:"var(--text-muted)",textTransform:"uppercase",letterSpacing:"0.5px",marginBottom:6}}>
+                        <i className="fas fa-users"/> Select who's competing from this group:
+                      </div>
+                      <div style={{display:"flex",flexWrap:"wrap",gap:6}}>
+                        {allMids.map(mid=>{
+                          const isActive=activeMids.includes(mid);
+                          return(
+                            <div key={mid}
+                              className={`chip${isActive?" selected":""}`}
+                              onClick={()=>toggleSlotMember(slot.id,mid)}
+                              style={{fontSize:12,padding:"4px 10px"}}>
+                              {wName2(mid,state)}
+                              {isActive&&<i className="fas fa-check" style={{marginLeft:5,fontSize:10}}/>}
+                            </div>
+                          );
+                        })}
+                      </div>
+                      {activeMids.length<1&&<div style={{fontSize:12,color:"var(--error)",marginTop:6}}><i className="fas fa-triangle-exclamation"/> Select at least 1 competing member</div>}
+                    </div>
+                  )}
                 </div>
               );
             })}
@@ -817,8 +886,8 @@ function WrestlerProfile({w,state,onClose}){
   const show=state.shows.find(s=>s.id===w.showId);
   const winPct=rec.total>0?Math.round(rec.pct*100):0;
   const mitbHeld=state.championships.filter(c=>c.type==="mitb"&&c.currentHolderId===w.id);
-  const recentMatches=state.matches.filter(m=>m.wrestlers.includes(w.id)).sort((a,b)=>new Date(b.date)-new Date(a.date)).slice(0,10);
-  const allMatches=state.matches.filter(m=>m.wrestlers.includes(w.id)).sort((a,b)=>new Date(b.date)-new Date(a.date)).slice(0,15);
+  const recentMatches=state.matches.filter(m=>m.wrestlers.includes(w.id)).sort((a,b)=>{const d=new Date(b.date)-new Date(a.date);return d!==0?d:state.matches.indexOf(b)-state.matches.indexOf(a);}).slice(0,10);
+  const allMatches=state.matches.filter(m=>m.wrestlers.includes(w.id)).sort((a,b)=>{const d=new Date(b.date)-new Date(a.date);return d!==0?d:state.matches.indexOf(b)-state.matches.indexOf(a);}).slice(0,15);
   const pastReigns=[];
   state.championships.forEach(c=>{if(c.type!=="singles")return;c.history.forEach(h=>{if(h.holderId===w.id)pastReigns.push({c,h});});});
 
@@ -946,7 +1015,7 @@ function ChampionshipProfile({c,state,onClose}){
     if(days>longestDays){longestDays=days;longestHolder=isTag?(state.tagTeams.find(t=>t.id===r.holderId)||{}).name||"?":(state.wrestlers.find(w=>w.id===r.holderId)||{}).name||"?";}
   });
   const currentDays=c.currentHolderId&&c.wonDate?Math.max(1,Math.ceil((new Date()-new Date(c.wonDate))/86400000)):0;
-  const champMatches=state.matches.filter(m=>m.isChampionshipMatch&&m.championshipId===c.id).sort((a,b)=>new Date(b.date)-new Date(a.date)).slice(0,20);
+  const champMatches=state.matches.filter(m=>m.isChampionshipMatch&&m.championshipId===c.id).sort((a,b)=>{const d=new Date(b.date)-new Date(a.date);return d!==0?d:state.matches.indexOf(b)-state.matches.indexOf(a);}).slice(0,20);
 
   return(
     <Modal title={`${c.name} — Profile`} onClose={onClose} footer={<button className="btn btn-secondary" onClick={onClose}>Close</button>}>
@@ -1636,11 +1705,25 @@ export default function App(){
     const champ=isTitle?state.championships.find(c=>c.id===m.championshipId):null;
     const groupParticipants=(m.tagTeamIds||[]).map(tid=>{
       const t=state.tagTeams.find(x=>x.id===tid);
-      const mids=t?getGroupMembers(t):[];
-      return {id:tid,name:tName(tid),isWinner:m.winnerTagTeamId===tid,memberNames:mids.map(mid=>wName(mid)),isAdhoc:false};
+      const fullMids=t?getGroupMembers(t):[];
+      // Use active members if stored, otherwise fall back to full roster
+      const activeMids=(m.slotActiveMembers&&m.slotActiveMembers[tid]&&m.slotActiveMembers[tid].length>0)
+        ?m.slotActiveMembers[tid]
+        :fullMids;
+      const benchedMids=fullMids.filter(m=>!activeMids.includes(m));
+      return {
+        id:tid,
+        name:tName(tid),
+        isWinner:m.winnerTagTeamId===tid,
+        memberNames:activeMids.map(mid=>wName(mid)),
+        benchedNames:benchedMids.map(mid=>wName(mid)),
+        isAdhoc:false
+      };
     });
     const adhocParticipants=(m.adhocTeams||[]).map(at=>({
-      id:at.id,name:at.label,isWinner:m.winnerAdhocId===at.id,memberNames:(at.memberIds||[]).map(mid=>wName(mid)),isAdhoc:true
+      id:at.id,name:at.label,isWinner:m.winnerAdhocId===at.id,
+      memberNames:(at.memberIds||[]).map(mid=>wName(mid)),
+      benchedNames:[],isAdhoc:true
     }));
     const participants=mt.isTag?[...groupParticipants,...adhocParticipants]
       :m.wrestlers.map(wid=>({id:wid,name:wName(wid),isWinner:m.winnerIds.includes(wid)}));
@@ -1668,7 +1751,13 @@ export default function App(){
         {mt.isTag&&participants.some(p=>p.memberNames&&p.memberNames.length>0)&&(
           <div style={{marginTop:4,display:"flex",flexWrap:"wrap",gap:10,fontSize:11,color:"var(--text-muted)"}}>
             {participants.map(p=>p.memberNames&&p.memberNames.length>0?(
-              <span key={p.id}><span style={{fontWeight:600,color:p.isWinner?"var(--success)":"var(--text-secondary)"}}>{p.name}:</span> {p.memberNames.join(", ")}</span>
+              <span key={p.id}>
+                <span style={{fontWeight:600,color:p.isWinner?"var(--success)":"var(--text-secondary)"}}>{p.name}:</span>{" "}
+                {p.memberNames.join(", ")}
+                {p.benchedNames&&p.benchedNames.length>0&&(
+                  <span style={{opacity:0.45,fontStyle:"italic"}}>{" "}(+{p.benchedNames.join(", ")} not competing)</span>
+                )}
+              </span>
             ):null)}
           </div>
         )}
@@ -1687,7 +1776,7 @@ export default function App(){
   const ranked=[...state.wrestlers].sort((a,b)=>getPowerRating(b.id,state)-getPowerRating(a.id,state));
 
   const Dashboard=({editMode})=>{
-    const recentMatches=[...state.matches].sort((a,b)=>new Date(b.date)-new Date(a.date)).slice(0,5);
+    const recentMatches=[...state.matches].sort((a,b)=>{const d=new Date(b.date)-new Date(a.date);return d!==0?d:state.matches.indexOf(b)-state.matches.indexOf(a);}).slice(0,5);
     const top5=ranked.slice(0,5);
     const champCards=state.championships.filter(c=>c.type!=="mitb");
     const mitbCards=state.championships.filter(c=>c.type==="mitb");
@@ -1970,7 +2059,12 @@ export default function App(){
   );
 
   const Matches=({editMode})=>{
-    let list=[...state.matches].sort((a,b)=>new Date(b.date)-new Date(a.date));
+    let list=[...state.matches].sort((a,b)=>{
+      const dateDiff=new Date(b.date)-new Date(a.date);
+      if(dateDiff!==0)return dateDiff;
+      // Same date — sort by insertion order descending (most recently added first)
+      return state.matches.indexOf(b)-state.matches.indexOf(a);
+    });
     if(matchSearch){list=list.filter(m=>{
       const names=m.wrestlers.map(id=>wName(id).toLowerCase());
       if(m.tagTeamIds)m.tagTeamIds.forEach(tid=>names.push(tName(tid).toLowerCase()));
