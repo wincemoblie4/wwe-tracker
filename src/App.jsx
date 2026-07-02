@@ -1366,7 +1366,8 @@ function EditPasswordModal({onUnlock,onClose}){
   const [input,setInput]=useState("");
   const [error,setError]=useState(false);
   const attempt=()=>{
-    if(input===EDIT_PASSWORD){onUnlock();onClose();}
+    // trim() handles accidental leading/trailing spaces in both the input and the constant
+    if(input.trim()===EDIT_PASSWORD.trim()){onUnlock();onClose();}
     else{setError(true);setInput("");}
   };
   return(
@@ -1382,7 +1383,7 @@ function EditPasswordModal({onUnlock,onClose}){
           onKeyDown={e=>{if(e.key==="Enter")attempt();}}
           placeholder="Enter password..."
           style={{borderColor:error?"var(--error)":undefined}}/>
-        {error&&<div className="form-hint" style={{color:"var(--error)",marginTop:6}}><i className="fas fa-circle-xmark"/> Incorrect password — try again.</div>}
+        {error&&<div className="form-hint" style={{color:"var(--error)",marginTop:6}}><i className="fas fa-circle-xmark"/> Incorrect — the password is set in <code>App.jsx</code> as <code>EDIT_PASSWORD</code> (currently <code>{EDIT_PASSWORD}</code>).</div>}
       </div>
     </Modal>
   );
