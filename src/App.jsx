@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, useCallback } from "react";
+import React, { useState, useEffect, useRef, useCallback } from "react";
 import { storage, isSupabaseConfigured } from "./storage.js";
 
 // ─── Inject external deps ────────────────────────────────────────────────────
@@ -32,6 +32,42 @@ const INIT_STATE = {
   matchTypes:DEFAULT_MATCH_TYPES.map(t=>({...t})),
   editPassword:""
 };
+
+// ─── Data migration / sanitization ───────────────────────────────────────────
+// Called whenever loading a save (cloud or file). Fills in missing fields with
+// safe defaults so old saves don't crash components that now expect new fields.
+function sanitizeLoadedData(d){
+  return {
+    wrestlers: (d.wrestlers||[]).map(w=>({image:"",nickname:"",showId:"",...w})),
+    shows: (d.shows||[]).map(s=>({showType:"weekly",linkedShows:[],pleDate:"",venue:"",image:"",description:"",day:"",...s})),
+    tagTeams: (d.tagTeams||[]).map(t=>{
+      const memberIds=t.memberIds&&t.memberIds.length
+        ?t.memberIds
+        :[t.member1Id,t.member2Id].filter(Boolean);
+      return{member1Id:"",member2Id:"",...t,memberIds};
+    }),
+    championships: (d.championships||[]).map(c=>({
+      type:"singles",showId:"",image:"",defenses:0,wonDate:null,history:[],...c
+    })),
+    matches: (d.matches||[]).map(m=>({
+      showId:"",notes:"",tagTeamIds:null,adhocTeams:null,
+      winnerTagTeamId:null,winnerAdhocId:null,slotActiveMembers:null,
+      isChampionshipMatch:false,championshipId:"",championshipIds:[],
+      titleChanged:false,titleChangedFrom:"",titleChangedTo:"",
+      ...m,
+      wrestlers: m.wrestlers||[],
+      winnerIds: m.winnerIds||[],
+      // Migrate single championshipId to array
+      championshipIds: m.championshipIds&&m.championshipIds.length
+        ?m.championshipIds
+        :(m.championshipId?[m.championshipId]:[]),
+    })),
+    matchTypes: d.matchTypes&&d.matchTypes.length
+      ?d.matchTypes
+      :DEFAULT_MATCH_TYPES.map(t=>({...t})),
+    editPassword: d.editPassword||"",
+  };
+}
 
 // ─── Hooks ──────────────────────────────────────────────────────────────────
 function useToasts() {
@@ -1261,13 +1297,18 @@ function CloudSaveModal({onClose,activeSlot,setActiveSlot,state,setState,setUnsa
         if(ph!==payload.passwordHash){addToast("Wrong password","error");setLoading(false);return;}
       }
       const d=payload.data;
-      setState(s=>({...s,...d,matchTypes:d.matchTypes||DEFAULT_MATCH_TYPES.map(t=>({...t}))}));
-      setUnsaved(false);setActiveSlot(payload.name);
-      // Reset edit mode when loading a new save — the new save may have a different edit password
+      // Migrate / sanitize to handle saves from older versions
+      const safe=sanitizeLoadedData(d);
+      setState(s=>({...s,...safe}));
+      setUnsaved(false);
+      setActiveSlot(payload.name);
       if(typeof setEditMode==="function")setEditMode(false);
       addToast(`Loaded "${payload.name}"!`,"success");
       onClose();
-    }catch{addToast("Load failed","error");}
+    }catch(e){
+      console.error("Load error:",e);
+      addToast("Load failed — save data may be corrupt","error");
+    }
     setLoading(false);
   };
 
@@ -1466,7 +1507,45 @@ function CloudSaveModal({onClose,activeSlot,setActiveSlot,state,setState,setUnsa
   );
 }
 
-// ─── Edit Mode Password Modal ─────────────────────────────────────────────────
+// ─── Error Boundary ───────────────────────────────────────────────────────────
+// Catches any render crash (e.g. from corrupt/unexpected save data) and shows
+// a friendly recovery screen instead of a blank white page.
+class ErrorBoundary extends React.Component {
+  constructor(props){super(props);this.state={crashed:false,error:""};}
+  static getDerivedStateFromError(e){return{crashed:true,error:e?.message||String(e)};}
+  componentDidCatch(e,info){console.error("App crash:",e,info);}
+  render(){
+    if(this.state.crashed){
+      return(
+        <div style={{minHeight:"100vh",display:"flex",alignItems:"center",justifyContent:"center",background:"#0B0B0F",color:"#F0F0F5",fontFamily:"Outfit,sans-serif",padding:24}}>
+          <div style={{maxWidth:480,textAlign:"center"}}>
+            <div style={{fontSize:48,marginBottom:16}}>⚠️</div>
+            <h2 style={{fontFamily:"Teko,sans-serif",fontSize:32,marginBottom:8,color:"#E51A2C"}}>Something went wrong</h2>
+            <p style={{color:"#8A8AA0",marginBottom:8,lineHeight:1.6}}>
+              The app crashed — this usually happens when loading a save that was created with an older version of the tracker.
+            </p>
+            <p style={{color:"#55556A",fontSize:13,marginBottom:24,fontStyle:"italic"}}>{this.state.error}</p>
+            <div style={{display:"flex",gap:12,justifyContent:"center",flexWrap:"wrap"}}>
+              <button onClick={()=>window.location.reload()}
+                style={{padding:"10px 24px",background:"#E51A2C",color:"#fff",border:"none",borderRadius:6,fontSize:14,fontWeight:600,cursor:"pointer",fontFamily:"Outfit,sans-serif"}}>
+                🔄 Reload App
+              </button>
+              <button onClick={()=>{this.setState({crashed:false,error:""});}}
+                style={{padding:"10px 24px",background:"transparent",color:"#8A8AA0",border:"1px solid #2A2A38",borderRadius:6,fontSize:14,fontWeight:600,cursor:"pointer",fontFamily:"Outfit,sans-serif"}}>
+                Try Again
+              </button>
+            </div>
+            <p style={{color:"#55556A",fontSize:12,marginTop:24}}>
+              Your data in Supabase is safe — the crash only affects the display. Reload to start fresh.
+            </p>
+          </div>
+        </div>
+      );
+    }
+    return this.props.children;
+  }
+}
+
 // ─── Edit Mode Password Modal ─────────────────────────────────────────────────
 function EditPasswordModal({onUnlock,onClose,editPassword}){
   const [input,setInput]=useState("");
@@ -1725,7 +1804,8 @@ export default function App(){
     const reader=new FileReader();
     reader.onload=(ev)=>{
       try{const data=JSON.parse(ev.target.result);
-        setState(s=>({...s,...data,matchTypes:data.matchTypes||DEFAULT_MATCH_TYPES.map(t=>({...t}))}));
+        const safe=sanitizeLoadedData(data);
+        setState(s=>({...s,...safe}));
         setUnsaved(false);addToast("Data loaded from file!","success");
       }catch{addToast("Invalid file","error");}
     };
@@ -2420,3 +2500,8 @@ export default function App(){
     </>
   );
 }
+
+// Wrap in ErrorBoundary so any render crash shows a friendly recovery screen
+// instead of a blank white page
+const AppWithBoundary=()=><ErrorBoundary><App/></ErrorBoundary>;
+export default AppWithBoundary;
