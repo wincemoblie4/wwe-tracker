@@ -453,7 +453,13 @@ function MatchModal({match,state,onSave,onClose,toast}){
   const [date,setDate]=useState(match?.date||new Date().toISOString().slice(0,10));
   const [showId,setShowId]=useState(match?.showId||"");
   const [isChamp,setIsChamp]=useState(match?.isChampionshipMatch||false);
-  const [champId,setChampId]=useState(match?.championshipId||"");
+  // Support both old single championshipId and new multiple championshipIds
+  const [champIds,setChampIds]=useState(()=>{
+    if(!match)return[];
+    if(match.championshipIds&&match.championshipIds.length)return match.championshipIds;
+    if(match.championshipId)return[match.championshipId];
+    return[];
+  });
   const [notes,setNotes]=useState(match?.notes||"");
 
   // Rebuild slots from an existing match (groups + adhoc teams)
@@ -608,8 +614,8 @@ function MatchModal({match,state,onSave,onClose,toast}){
       if(!winnerId){toast("Select a winner","error");return;}
       wrestlers=[...selWrestlers];winnerIds=[winnerId];
     }
-    if(isChamp&&!champId){toast("Select a championship","error");return;}
-    onSave({date,showId,matchType,wrestlers,tagTeamIds,adhocTeams,slotActiveMembers:slotActiveMembers||undefined,winnerIds,winnerTagTeamId,winnerAdhocId,isChampionshipMatch:isChamp,championshipId:isChamp?champId:"",notes});
+    if(isChamp&&champIds.length===0){toast("Select at least one championship","error");return;}
+    onSave({date,showId,matchType,wrestlers,tagTeamIds,adhocTeams,slotActiveMembers:slotActiveMembers||undefined,winnerIds,winnerTagTeamId,winnerAdhocId,isChampionshipMatch:isChamp,championshipIds:isChamp?champIds:[],championshipId:isChamp&&champIds.length>0?champIds[0]:"",notes});
     onClose();
   };
 
@@ -663,7 +669,7 @@ function MatchModal({match,state,onSave,onClose,toast}){
                       </div>
                     </div>
                     <button type="button" className="btn btn-secondary btn-sm" onClick={()=>{
-                        if(isChamp&&slot.kind==="adhoc"){toast("Ad-hoc teams can't hold championships — pick a saved Group as the winner","error");return;}
+                        if(isChamp&&champIds.length>0&&slot.kind==="adhoc"){toast("Ad-hoc teams can't hold championships — pick a saved Group as the winner","error");return;}
                         setWinnerSlotId(slot.id);
                       }} disabled={isWinner}>
                       {isWinner?<i className="fas fa-check"/>:"Set Winner"}
@@ -763,17 +769,31 @@ function MatchModal({match,state,onSave,onClose,toast}){
       )}
       <div className="form-group">
         <label style={{display:"flex",alignItems:"center",gap:10,cursor:"pointer",fontSize:14}}>
-          <input type="checkbox" checked={isChamp} onChange={e=>setIsChamp(e.target.checked)} style={{width:18,height:18,accentColor:"var(--primary)"}}/>
+          <input type="checkbox" checked={isChamp} onChange={e=>{setIsChamp(e.target.checked);if(!e.target.checked)setChampIds([]);}} style={{width:18,height:18,accentColor:"var(--primary)"}}/>
           Championship Match
         </label>
       </div>
-      {isChamp&&<div className="form-group"><label className="form-label">Championship</label>
-        <select className="form-select" value={champId} onChange={e=>setChampId(e.target.value)}>
-          <option value="">— Select —</option>
-          {champOptions.map(c=><option key={c.id} value={c.id}>{c.name}{c.type==="mitb"?" (Briefcase)":""}</option>)}
-        </select>
+      {isChamp&&<div className="form-group">
+        <label className="form-label">Championships on the Line</label>
+        <div style={{display:"flex",flexWrap:"wrap",gap:6,marginBottom:8}}>
+          {champOptions.map(c=>{
+            const sel=champIds.includes(c.id);
+            return(
+              <div key={c.id} className={`chip${sel?" selected":""}`}
+                onClick={()=>setChampIds(p=>sel?p.filter(x=>x!==c.id):[...p,c.id])}>
+                {c.type==="mitb"?<i className="fas fa-briefcase" style={{marginRight:4}}/>:<i className="fas fa-trophy" style={{marginRight:4,opacity:0.7}}/>}
+                {c.name}
+                {sel&&<i className="fas fa-check" style={{marginLeft:5,fontSize:10}}/>}
+              </div>
+            );
+          })}
+          {champOptions.length===0&&<span style={{color:"var(--text-muted)",fontStyle:"italic",fontSize:13}}>No championships available for this match type.</span>}
+        </div>
+        {champIds.length>1&&<div style={{padding:"6px 10px",background:"rgba(255,215,0,0.08)",border:"1px solid rgba(255,215,0,0.2)",borderRadius:6,fontSize:12,color:"var(--accent)"}}>
+          <i className="fas fa-crown"/> {champIds.length} titles on the line — the winner takes all.
+        </div>}
         {match&&<div className="form-hint" style={{marginTop:6}}>
-          <i className="fas fa-circle-info"/> Editing won't re-apply title changes or defense counts — those were locked in when this match was first recorded. To correct a title result, delete this match and record it again.
+          <i className="fas fa-circle-info"/> Editing won't re-apply title changes or defense counts — delete and re-record to correct a title result.
         </div>}
       </div>}
       <div className="form-group"><label className="form-label">Notes</label><input className="form-input" value={notes} onChange={e=>setNotes(e.target.value)} placeholder="e.g. Stipulation, finish type..."/></div>
@@ -993,7 +1013,7 @@ function WrestlerProfile({w,state,onClose}){
             <div style={{width:24,height:24,borderRadius:"50%",background:isWin?"var(--success)":"var(--error)",display:"flex",alignItems:"center",justifyContent:"center",fontSize:10,fontWeight:800,color:"#fff",flexShrink:0}}>{isWin?"W":"L"}</div>
             <div style={{flex:1,minWidth:0}}>
               <span style={{fontWeight:600,color:"var(--text)"}}>vs {opp}</span>
-              <div style={{fontSize:11,color:"var(--text-muted)"}}>{mt?.name||m.matchType}{mShow?" · "+mShow.name:""} · {fmtDate(m.date)}{m.isChampionshipMatch?" · 🏆":""}</div>
+              <div style={{fontSize:11,color:"var(--text-muted)"}}>{mt?.name||m.matchType}{mShow?" · "+mShow.name:""} · {fmtDate(m.date)}{m.isChampionshipMatch?" · 🏆 "+(()=>{const ids=m.championshipIds&&m.championshipIds.length?m.championshipIds:(m.championshipId?[m.championshipId]:[]);return ids.map(cid=>(state.championships.find(c=>c.id===cid)||{}).name||"Title").join(" & ");})():"" }</div>
             </div>
           </div>);
         })}
@@ -1016,7 +1036,11 @@ function ChampionshipProfile({c,state,onClose}){
     if(days>longestDays){longestDays=days;longestHolder=isTag?(state.tagTeams.find(t=>t.id===r.holderId)||{}).name||"?":(state.wrestlers.find(w=>w.id===r.holderId)||{}).name||"?";}
   });
   const currentDays=c.currentHolderId&&c.wonDate?Math.max(1,Math.ceil((new Date()-new Date(c.wonDate))/86400000)):0;
-  const champMatches=state.matches.filter(m=>m.isChampionshipMatch&&m.championshipId===c.id).sort((a,b)=>{const d=new Date(b.date)-new Date(a.date);return d!==0?d:state.matches.indexOf(b)-state.matches.indexOf(a);}).slice(0,20);
+  const champMatches=state.matches.filter(m=>{
+    if(!m.isChampionshipMatch)return false;
+    if(m.championshipIds&&m.championshipIds.length)return m.championshipIds.includes(c.id);
+    return m.championshipId===c.id;
+  }).sort((a,b)=>{const d=new Date(b.date)-new Date(a.date);return d!==0?d:state.matches.indexOf(b)-state.matches.indexOf(a);}).slice(0,20);
 
   return(
     <Modal title={`${c.name} — Profile`} onClose={onClose} footer={<button className="btn btn-secondary" onClick={onClose}>Close</button>}>
@@ -1587,53 +1611,53 @@ export default function App(){
   const saveMatch=(id,data)=>{
     mutate(s=>{
       // Handle championship logic — ONLY for brand-new matches.
-      // Editing an existing match must never re-apply title-change side effects
-      // (defenses++, history pushes) or every edit would corrupt championship history.
       let titleChanged=false,titleChangedFrom="",titleChangedTo="";
-      if(!id&&data.isChampionshipMatch&&data.championshipId){
-        const champ=s.championships.find(c=>c.id===data.championshipId);
-        if(champ){
-          const mt=s.matchTypes.find(t=>t.id===data.matchType);
-          const isTagMatch=mt?.isTag;
+      if(!id&&data.isChampionshipMatch){
+        // Support both old single championshipId and new array
+        const ids=data.championshipIds&&data.championshipIds.length?data.championshipIds:(data.championshipId?[data.championshipId]:[]);
+        const mt=s.matchTypes.find(t=>t.id===data.matchType);
+        const isTagMatch=mt?.isTag;
+        const titleChanges=[]; // collect all changes to display
+        ids.forEach(cid=>{
+          const champ=s.championships.find(c=>c.id===cid);
+          if(!champ)return;
           if(champ.type==="mitb"){
             const nw=data.winnerIds[0];
             if(champ.currentHolderId&&champ.currentHolderId!==nw){
-              titleChangedFrom=(s.wrestlers.find(w=>w.id===champ.currentHolderId)||{}).name||"?";
-              titleChangedTo=(s.wrestlers.find(w=>w.id===nw)||{}).name||"?";
-              titleChanged=true;
+              titleChanges.push({from:(s.wrestlers.find(w=>w.id===champ.currentHolderId)||{}).name||"?",to:(s.wrestlers.find(w=>w.id===nw)||{}).name||"?",name:champ.name});
               champ.history.push({holderId:champ.currentHolderId,wonDate:champ.wonDate,lostDate:data.date,defenses:0});
               champ.currentHolderId=nw;champ.wonDate=data.date;
             }else if(!champ.currentHolderId){
-              titleChangedTo=(s.wrestlers.find(w=>w.id===nw)||{}).name||"?";
-              titleChanged=true;champ.currentHolderId=nw;champ.wonDate=data.date;
+              titleChanges.push({from:"",to:(s.wrestlers.find(w=>w.id===nw)||{}).name||"?",name:champ.name});
+              champ.currentHolderId=nw;champ.wonDate=data.date;
             }
             champ.defenses=0;
           }else{
             const currentH=champ.currentHolderId;
-            // Safety: championships can only be held by saved Groups, never ad-hoc teams
             if(isTagMatch&&data.winnerAdhocId&&!data.winnerTagTeamId){
-              // Skip championship update entirely — this shouldn't happen since MatchModal blocks it,
-              // but if it does, don't corrupt currentHolderId with a non-persistent ad-hoc id.
+              // Skip — ad-hoc teams can't hold titles
             }else{
               const newW=isTagMatch?data.winnerTagTeamId:data.winnerIds[0];
-              const newWName=isTagMatch
-                ?(s.tagTeams.find(t=>t.id===newW)||{}).name||"?"
-                :(s.wrestlers.find(w=>w.id===newW)||{}).name||"?";
+              const newWName=isTagMatch?(s.tagTeams.find(t=>t.id===newW)||{}).name||"?":(s.wrestlers.find(w=>w.id===newW)||{}).name||"?";
               if(currentH){
                 if(currentH===newW){champ.defenses++;}
                 else{
-                  titleChangedFrom=isTagMatch?(s.tagTeams.find(t=>t.id===currentH)||{}).name||"?":(s.wrestlers.find(w=>w.id===currentH)||{}).name||"?";
-                  titleChangedTo=newWName;
-                  titleChanged=true;
+                  titleChanges.push({from:isTagMatch?(s.tagTeams.find(t=>t.id===currentH)||{}).name||"?":(s.wrestlers.find(w=>w.id===currentH)||{}).name||"?",to:newWName,name:champ.name});
                   champ.history.push({holderId:currentH,wonDate:champ.wonDate,lostDate:data.date,defenses:champ.defenses});
                   champ.currentHolderId=newW;champ.defenses=0;champ.wonDate=data.date;
                 }
               }else{
-                titleChangedTo=newWName;
-                titleChanged=true;champ.currentHolderId=newW;champ.defenses=0;champ.wonDate=data.date;
+                titleChanges.push({from:"",to:newWName,name:champ.name});
+                champ.currentHolderId=newW;champ.defenses=0;champ.wonDate=data.date;
               }
             }
           }
+        });
+        // Build titleChanged summary from all championships
+        if(titleChanges.length>0){
+          titleChanged=true;
+          titleChangedFrom=titleChanges.filter(t=>t.from).map(t=>t.from).join(" & ")||"";
+          titleChangedTo=titleChanges.map(t=>t.to).join(" & ");
         }
       }
       if(id){
@@ -1717,7 +1741,9 @@ export default function App(){
     const show=state.shows.find(s=>s.id===m.showId);
     const mt=state.matchTypes.find(t=>t.id===m.matchType)||{name:m.matchType,isTag:false};
     const isTitle=m.isChampionshipMatch;
-    const champ=isTitle?state.championships.find(c=>c.id===m.championshipId):null;
+    // Support both old single championshipId and new array
+    const champIds=m.championshipIds&&m.championshipIds.length?m.championshipIds:(m.championshipId?[m.championshipId]:[]);
+    const champs=isTitle?champIds.map(cid=>state.championships.find(c=>c.id===cid)).filter(Boolean):[];
     const groupParticipants=(m.tagTeamIds||[]).map(tid=>{
       const t=state.tagTeams.find(x=>x.id===tid);
       const fullMids=t?getGroupMembers(t):[];
@@ -1752,10 +1778,17 @@ export default function App(){
             {show&&<span className="card-badge badge-show"><span style={{width:8,height:8,borderRadius:"50%",background:show.color,display:"inline-block"}}/> {show.name}</span>}
             <span>{fmtDate(m.date)}</span>
           </div>
-          <div style={{display:"flex",gap:4,alignItems:"center"}}>
-            <span className={`match-type-badge${isTitle?" championship":""}`}>
-              {isTitle?<><i className="fas fa-trophy"/> {champ?.name||"Title"}</>:mt.name}
-            </span>
+          <div style={{display:"flex",gap:4,alignItems:"center",flexWrap:"wrap"}}>
+            {isTitle&&champs.length>0
+              ? champs.map(c=>(
+                  <span key={c.id} className="match-type-badge championship">
+                    <i className="fas fa-trophy"/> {c.name}
+                  </span>
+                ))
+              : isTitle
+                ? <span className="match-type-badge championship"><i className="fas fa-trophy"/> Title</span>
+                : <span className="match-type-badge">{mt.name}</span>
+            }
             {editMode&&<><button className="card-action-btn" onClick={()=>setModal({type:"match",data:m})}><i className="fas fa-pen"/></button>
             <button className="card-action-btn delete" onClick={()=>setConfirm({msg:"Delete this match?",fn:()=>deleteMatch(m.id)})}><i className="fas fa-trash"/></button></>}
           </div>
