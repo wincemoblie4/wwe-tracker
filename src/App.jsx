@@ -29,7 +29,8 @@ const DEFAULT_MATCH_TYPES = [
 ];
 const INIT_STATE = {
   wrestlers:[],shows:[],tagTeams:[],championships:[],matches:[],
-  matchTypes:DEFAULT_MATCH_TYPES.map(t=>({...t}))
+  matchTypes:DEFAULT_MATCH_TYPES.map(t=>({...t})),
+  editPassword:""
 };
 
 // ─── Hooks ──────────────────────────────────────────────────────────────────
@@ -1090,10 +1091,11 @@ function ChampionshipProfile({c,state,onClose}){
 }
 
 // ─── Cloud Save Modal ────────────────────────────────────────────────────────
-function CloudSaveModal({onClose,activeSlot,setActiveSlot,state,setState,setUnsaved,addToast,exportData,importRef,setConfirm}){
+function CloudSaveModal({onClose,activeSlot,setActiveSlot,state,setState,setUnsaved,addToast,exportData,importRef,setConfirm,setEditMode}){
   const [tab,setTab]=useState("save");
   const [localSaveName,setLocalSaveName]=useState(activeSlot||"");
   const [localSavePass,setLocalSavePass]=useState("");
+  const [localEditPass,setLocalEditPass]=useState(state.editPassword||"");
   const [saveSlots,setSaveSlots]=useState([]);
   const [loading,setLoading]=useState(false);
   const [slotPasswords,setSlotPasswords]=useState({});
@@ -1207,11 +1209,13 @@ function CloudSaveModal({onClose,activeSlot,setActiveSlot,state,setState,setUnsa
       }catch{ /* backup failing shouldn't block the save itself */ }
     }
     const passwordHash=password?await simpleHash(password):(force&&existing?.passwordHash?existing.passwordHash:"");
+    // Merge the editPassword into the state before saving
+    const stateToSave={...state,editPassword:localEditPass.trim()};
     const payload={
       name:name.trim(),savedAt:new Date().toISOString(),passwordHash,
       wrestlers:state.wrestlers.length,shows:state.shows.length,
       matches:state.matches.length,championships:state.championships.length,
-      data:state
+      data:stateToSave
     };
     try{
       await storage.set(key,JSON.stringify(payload),true);
@@ -1235,6 +1239,8 @@ function CloudSaveModal({onClose,activeSlot,setActiveSlot,state,setState,setUnsa
       const d=payload.data;
       setState(s=>({...s,...d,matchTypes:d.matchTypes||DEFAULT_MATCH_TYPES.map(t=>({...t}))}));
       setUnsaved(false);setActiveSlot(payload.name);
+      // Reset edit mode when loading a new save — the new save may have a different edit password
+      if(typeof setEditMode==="function")setEditMode(false);
       addToast(`Loaded "${payload.name}"!`,"success");
       onClose();
     }catch{addToast("Load failed","error");}
@@ -1304,11 +1310,22 @@ function CloudSaveModal({onClose,activeSlot,setActiveSlot,state,setState,setUnsa
               placeholder="e.g. MyUniverse, Johns-Playthrough..."/>
             <div style={{fontSize:11,color:"var(--text-muted)",marginTop:4}}>Letters, numbers and hyphens. Used as the unique ID.</div>
           </div>
-          <div className="form-group">
-            <label className="form-label">Password <span style={{color:"var(--text-muted)",fontWeight:400,textTransform:"none"}}>(optional — protects from overwrite)</span></label>
-            <input className="form-input" type="password" value={localSavePass} onChange={e=>setLocalSavePass(e.target.value)}
-              placeholder="Leave blank for no password"/>
+          <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12}}>
+            <div className="form-group">
+              <label className="form-label">Overwrite Password <span style={{color:"var(--text-muted)",fontWeight:400,textTransform:"none",fontSize:10}}>(stops others overwriting)</span></label>
+              <input className="form-input" type="password" value={localSavePass} onChange={e=>setLocalSavePass(e.target.value)}
+                placeholder="Leave blank for none"/>
+            </div>
+            <div className="form-group">
+              <label className="form-label">Edit Password <span style={{color:"var(--text-muted)",fontWeight:400,textTransform:"none",fontSize:10}}>(unlocks editing for viewers)</span></label>
+              <input className="form-input" type="password" value={localEditPass} onChange={e=>setLocalEditPass(e.target.value)}
+                placeholder="Leave blank = anyone can edit"/>
+            </div>
           </div>
+          {localEditPass&&<div style={{padding:"8px 12px",background:"rgba(229,26,44,0.06)",border:"1px solid rgba(229,26,44,0.2)",borderRadius:6,marginBottom:12,fontSize:12,color:"var(--text-secondary)",lineHeight:1.5}}>
+            <i className="fas fa-circle-info" style={{color:"var(--primary)",marginRight:5}}/>
+            Make sure to tell your editors the edit password — it can only be recovered by loading and re-saving with a new one.
+          </div>}
           <button className="btn btn-primary" style={{width:"100%",marginBottom:12}} disabled={loading}
             onClick={()=>doSave(localSaveName,localSavePass)}>
             {loading?<><i className="fas fa-spinner fa-spin"/> Saving...</>:<><i className="fas fa-cloud-arrow-up"/> Save to Cloud</>}
@@ -1426,34 +1443,32 @@ function CloudSaveModal({onClose,activeSlot,setActiveSlot,state,setState,setUnsa
 }
 
 // ─── Edit Mode Password Modal ─────────────────────────────────────────────────
-// Change EDIT_PASSWORD below to whatever password you want people to use
-// to unlock editing. Keep it simple — it's not high security, just a
-// deterrent against accidental changes.
-const EDIT_PASSWORD = "wwe2k26";
-
-function EditPasswordModal({onUnlock,onClose}){
+// ─── Edit Mode Password Modal ─────────────────────────────────────────────────
+function EditPasswordModal({onUnlock,onClose,editPassword}){
   const [input,setInput]=useState("");
   const [error,setError]=useState(false);
   const attempt=()=>{
-    // trim() handles accidental leading/trailing spaces in both the input and the constant
-    if(input.trim()===EDIT_PASSWORD.trim()){onUnlock();onClose();}
+    if(!editPassword||input.trim()===editPassword.trim()){onUnlock();onClose();}
     else{setError(true);setInput("");}
   };
   return(
     <Modal title="Enter Edit Password" onClose={onClose} maxWidth={380}
       footer={<><button className="btn btn-secondary" onClick={onClose}>Cancel</button><button className="btn btn-primary" onClick={attempt}><i className="fas fa-unlock"/> Unlock</button></>}>
       <p style={{fontSize:14,color:"var(--text-secondary)",marginBottom:16,lineHeight:1.5}}>
-        This tracker is in <strong>view-only mode</strong> by default. Enter the edit password to add, edit, or delete anything.
+        This tracker is in <strong>view-only mode</strong>. Enter the edit password to add, edit, or delete anything.
       </p>
-      <div className="form-group">
+      {!editPassword&&<div style={{padding:"8px 12px",background:"rgba(34,197,94,0.08)",border:"1px solid rgba(34,197,94,0.2)",borderRadius:6,marginBottom:12,fontSize:13,color:"var(--success)"}}>
+        <i className="fas fa-circle-info"/> No edit password set on this save — click Unlock to proceed.
+      </div>}
+      {editPassword&&<div className="form-group">
         <label className="form-label">Password</label>
         <input autoFocus className="form-input" type="password" value={input}
           onChange={e=>{setInput(e.target.value);setError(false);}}
           onKeyDown={e=>{if(e.key==="Enter")attempt();}}
           placeholder="Enter password..."
           style={{borderColor:error?"var(--error)":undefined}}/>
-        {error&&<div className="form-hint" style={{color:"var(--error)",marginTop:6}}><i className="fas fa-circle-xmark"/> Incorrect — the password is set in <code>App.jsx</code> as <code>EDIT_PASSWORD</code> (currently <code>{EDIT_PASSWORD}</code>).</div>}
-      </div>
+        {error&&<div className="form-hint" style={{color:"var(--error)",marginTop:6}}><i className="fas fa-circle-xmark"/> Incorrect password — try again.</div>}
+      </div>}
     </Modal>
   );
 }
@@ -2280,15 +2295,19 @@ export default function App(){
         <div className="header-actions">
           {/* Edit mode indicator + toggle */}
           <button
-            onClick={()=>editMode?setEditMode(false):setEditPasswordModal(true)}
-            title={editMode?"Switch back to view-only mode":"Unlock editing"}
+            onClick={()=>{
+              if(editMode){setEditMode(false);}
+              else if(!state.editPassword){setEditMode(true);}  // no password set — unlock directly
+              else{setEditPasswordModal(true);}
+            }}
+            title={editMode?"Switch back to view-only mode":state.editPassword?"Unlock editing (password required)":"Unlock editing (no password set)"}
             style={{display:"flex",alignItems:"center",gap:6,padding:"6px 12px",borderRadius:"var(--radius-sm)",
               border:`1px solid ${editMode?"var(--success)":"var(--border)"}`,
               background:editMode?"rgba(34,197,94,0.1)":"var(--bg-card)",
               color:editMode?"var(--success)":"var(--text-muted)",
               cursor:"pointer",fontSize:13,fontFamily:"Outfit,sans-serif",fontWeight:600,transition:"all 0.2s"}}>
-            <i className={`fas ${editMode?"fa-lock-open":"fa-lock"}`}/>
-            {editMode?"Editing":"View Only"}
+            <i className={`fas ${editMode?"fa-lock-open":state.editPassword?"fa-lock":"fa-lock-open"}`}/>
+            {editMode?"Editing":state.editPassword?"View Only":"Edit"}
           </button>
           {activeSlot&&<span style={{fontSize:12,color:"var(--text-muted)",maxWidth:120,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",display:"none"}} className="active-slot-label">📁 {activeSlot}</span>}
           <button className={`btn-save${unsaved?" unsaved":""}`} onClick={()=>setCloudModal(true)}>
@@ -2323,7 +2342,7 @@ export default function App(){
       </main>
 
       {/* Edit Password Modal */}
-      {editPasswordModal&&<EditPasswordModal onUnlock={()=>setEditMode(true)} onClose={()=>setEditPasswordModal(false)}/>}
+      {editPasswordModal&&<EditPasswordModal onUnlock={()=>setEditMode(true)} onClose={()=>setEditPasswordModal(false)} editPassword={state.editPassword}/>}
 
       {/* Cloud Save Modal */}
       {cloudModal&&<CloudSaveModal
@@ -2337,6 +2356,7 @@ export default function App(){
         exportData={exportData}
         importRef={importRef}
         setConfirm={setConfirm}
+        setEditMode={setEditMode}
       />}
 
       {/* Modals */}
