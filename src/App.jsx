@@ -1151,7 +1151,7 @@ function ChampionshipProfile({c,state,onClose}){
 }
 
 // ─── Cloud Save Modal ────────────────────────────────────────────────────────
-function CloudSaveModal({onClose,activeSlot,setActiveSlot,state,setState,setUnsaved,addToast,exportData,importRef,setConfirm,setEditMode}){
+function CloudSaveModal({onClose,activeSlot,setActiveSlot,state,setState,setUnsaved,addToast,exportData,importRef,setConfirm,setEditMode,setView}){
   const [tab,setTab]=useState("save");
   const [localSaveName,setLocalSaveName]=useState(activeSlot||"");
   const [localSavePass,setLocalSavePass]=useState("");
@@ -1297,14 +1297,22 @@ function CloudSaveModal({onClose,activeSlot,setActiveSlot,state,setState,setUnsa
         if(ph!==payload.passwordHash){addToast("Wrong password","error");setLoading(false);return;}
       }
       const d=payload.data;
+      // Validate the data has minimum required shape before touching state
+      if(!d||typeof d!=="object"){addToast("Save data is corrupt or unreadable","error");setLoading(false);return;}
       // Migrate / sanitize to handle saves from older versions
-      const safe=sanitizeLoadedData(d);
+      let safe;
+      try{safe=sanitizeLoadedData(d);}
+      catch(e){console.error("Sanitize error:",e);addToast("Save data could not be migrated — it may be too old","error");setLoading(false);return;}
+      // Close modal and reset to dashboard FIRST before swapping state
+      onClose();
+      if(typeof setView==="function")setView("dashboard");
+      // Small delay lets React flush the modal unmount and view reset before the state swap
+      await new Promise(r=>setTimeout(r,50));
       setState(s=>({...s,...safe}));
       setUnsaved(false);
       setActiveSlot(payload.name);
       if(typeof setEditMode==="function")setEditMode(false);
       addToast(`Loaded "${payload.name}"!`,"success");
-      onClose();
     }catch(e){
       console.error("Load error:",e);
       addToast("Load failed — save data may be corrupt","error");
@@ -2445,13 +2453,23 @@ export default function App(){
       </nav>
 
       <main className="main-content" style={!isSupabaseConfigured?{marginTop:132}:undefined}>
-        {view==="dashboard"&&<Dashboard editMode={editMode}/>}
-        {view==="roster"&&<Roster editMode={editMode}/>}
-        {view==="shows"&&<Shows editMode={editMode}/>}
-        {view==="tag-teams"&&<TagTeams editMode={editMode}/>}
-        {view==="championships"&&<Championships editMode={editMode}/>}
-        {view==="matches"&&<Matches editMode={editMode}/>}
-        {view==="rankings"&&<Rankings editMode={editMode}/>}
+        {/* Guard: don't render views if core state arrays aren't ready */}
+        {state.wrestlers&&state.matches&&state.shows?(
+          <>
+            {view==="dashboard"&&<Dashboard editMode={editMode}/>}
+            {view==="roster"&&<Roster editMode={editMode}/>}
+            {view==="shows"&&<Shows editMode={editMode}/>}
+            {view==="tag-teams"&&<TagTeams editMode={editMode}/>}
+            {view==="championships"&&<Championships editMode={editMode}/>}
+            {view==="matches"&&<Matches editMode={editMode}/>}
+            {view==="rankings"&&<Rankings editMode={editMode}/>}
+          </>
+        ):(
+          <div style={{textAlign:"center",padding:80,color:"var(--text-muted)"}}>
+            <i className="fas fa-spinner fa-spin" style={{fontSize:32,display:"block",marginBottom:12}}/>
+            Loading...
+          </div>
+        )}
       </main>
 
       {/* Edit Password Modal */}
@@ -2470,6 +2488,7 @@ export default function App(){
         importRef={importRef}
         setConfirm={setConfirm}
         setEditMode={setEditMode}
+        setView={setView}
       />}
 
       {/* Modals */}
