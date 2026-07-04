@@ -1297,25 +1297,49 @@ function CloudSaveModal({onClose,activeSlot,setActiveSlot,state,setState,setUnsa
         if(ph!==payload.passwordHash){addToast("Wrong password","error");setLoading(false);return;}
       }
       const d=payload.data;
-      // Validate the data has minimum required shape before touching state
       if(!d||typeof d!=="object"){addToast("Save data is corrupt or unreadable","error");setLoading(false);return;}
-      // Migrate / sanitize to handle saves from older versions
+
+      // Log raw data structure so we can see exactly what the save contains
+      console.log("=== LOAD DEBUG ===");
+      console.log("Keys in save:",Object.keys(d));
+      console.log("wrestlers:",Array.isArray(d.wrestlers),d.wrestlers?.length);
+      console.log("shows:",Array.isArray(d.shows),d.shows?.length);
+      console.log("tagTeams:",Array.isArray(d.tagTeams),d.tagTeams?.length);
+      console.log("championships:",Array.isArray(d.championships),d.championships?.length);
+      console.log("matches:",Array.isArray(d.matches),d.matches?.length);
+      console.log("matchTypes:",Array.isArray(d.matchTypes),d.matchTypes?.length);
+      if(d.matches?.length){
+        console.log("First match sample:",JSON.stringify(d.matches[0]).slice(0,300));
+      }
+      if(d.championships?.length){
+        console.log("First champ sample:",JSON.stringify(d.championships[0]).slice(0,300));
+      }
+
       let safe;
-      try{safe=sanitizeLoadedData(d);}
-      catch(e){console.error("Sanitize error:",e);addToast("Save data could not be migrated — it may be too old","error");setLoading(false);return;}
-      // Close modal and reset to dashboard FIRST before swapping state
+      try{
+        safe=sanitizeLoadedData(d);
+        console.log("Sanitize succeeded");
+        console.log("safe wrestlers:",safe.wrestlers?.length);
+        console.log("safe matches:",safe.matches?.length);
+      }catch(e){
+        console.error("Sanitize FAILED:",e);
+        addToast("Save data could not be migrated: "+e.message,"error");
+        setLoading(false);return;
+      }
+
       onClose();
       if(typeof setView==="function")setView("dashboard");
-      // Small delay lets React flush the modal unmount and view reset before the state swap
-      await new Promise(r=>setTimeout(r,50));
+      await new Promise(r=>setTimeout(r,80));
+      console.log("About to setState...");
       setState(s=>({...s,...safe}));
+      console.log("setState called");
       setUnsaved(false);
       setActiveSlot(payload.name);
       if(typeof setEditMode==="function")setEditMode(false);
       addToast(`Loaded "${payload.name}"!`,"success");
     }catch(e){
-      console.error("Load error:",e);
-      addToast("Load failed — save data may be corrupt","error");
+      console.error("Load FAILED:",e);
+      addToast("Load failed: "+e.message,"error");
     }
     setLoading(false);
   };
@@ -1519,32 +1543,39 @@ function CloudSaveModal({onClose,activeSlot,setActiveSlot,state,setState,setUnsa
 // Catches any render crash (e.g. from corrupt/unexpected save data) and shows
 // a friendly recovery screen instead of a blank white page.
 class ErrorBoundary extends React.Component {
-  constructor(props){super(props);this.state={crashed:false,error:""};}
-  static getDerivedStateFromError(e){return{crashed:true,error:e?.message||String(e)};}
+  constructor(props){super(props);this.state={crashed:false,error:"",stack:""};}
+  static getDerivedStateFromError(e){return{crashed:true,error:e?.message||String(e),stack:e?.stack||""};}
   componentDidCatch(e,info){console.error("App crash:",e,info);}
   render(){
     if(this.state.crashed){
       return(
         <div style={{minHeight:"100vh",display:"flex",alignItems:"center",justifyContent:"center",background:"#0B0B0F",color:"#F0F0F5",fontFamily:"Outfit,sans-serif",padding:24}}>
-          <div style={{maxWidth:480,textAlign:"center"}}>
-            <div style={{fontSize:48,marginBottom:16}}>⚠️</div>
-            <h2 style={{fontFamily:"Teko,sans-serif",fontSize:32,marginBottom:8,color:"#E51A2C"}}>Something went wrong</h2>
-            <p style={{color:"#8A8AA0",marginBottom:8,lineHeight:1.6}}>
-              The app crashed — this usually happens when loading a save that was created with an older version of the tracker.
+          <div style={{maxWidth:600,width:"100%"}}>
+            <div style={{fontSize:48,marginBottom:16,textAlign:"center"}}>⚠️</div>
+            <h2 style={{fontFamily:"Teko,sans-serif",fontSize:32,marginBottom:8,color:"#E51A2C",textAlign:"center"}}>Something went wrong</h2>
+            <p style={{color:"#8A8AA0",marginBottom:12,lineHeight:1.6,textAlign:"center"}}>
+              Copy everything in the box below and send it — this will tell us exactly what is broken.
             </p>
-            <p style={{color:"#55556A",fontSize:13,marginBottom:24,fontStyle:"italic"}}>{this.state.error}</p>
+            <div style={{background:"#141419",border:"1px solid #2A2A38",borderRadius:8,padding:16,marginBottom:16,overflowX:"auto"}}>
+              <div style={{color:"#EF4444",fontWeight:700,marginBottom:8,fontSize:14}}>Error:</div>
+              <div style={{color:"#F0F0F5",fontSize:13,fontFamily:"monospace",marginBottom:12,whiteSpace:"pre-wrap",wordBreak:"break-all"}}>{this.state.error}</div>
+              {this.state.stack&&<>
+                <div style={{color:"#8A8AA0",fontWeight:700,marginBottom:4,fontSize:12}}>Stack trace:</div>
+                <div style={{color:"#55556A",fontSize:11,fontFamily:"monospace",whiteSpace:"pre-wrap",wordBreak:"break-all",maxHeight:200,overflowY:"auto"}}>{this.state.stack}</div>
+              </>}
+            </div>
             <div style={{display:"flex",gap:12,justifyContent:"center",flexWrap:"wrap"}}>
               <button onClick={()=>window.location.reload()}
                 style={{padding:"10px 24px",background:"#E51A2C",color:"#fff",border:"none",borderRadius:6,fontSize:14,fontWeight:600,cursor:"pointer",fontFamily:"Outfit,sans-serif"}}>
                 🔄 Reload App
               </button>
-              <button onClick={()=>{this.setState({crashed:false,error:""});}}
+              <button onClick={()=>this.setState({crashed:false,error:"",stack:""})}
                 style={{padding:"10px 24px",background:"transparent",color:"#8A8AA0",border:"1px solid #2A2A38",borderRadius:6,fontSize:14,fontWeight:600,cursor:"pointer",fontFamily:"Outfit,sans-serif"}}>
                 Try Again
               </button>
             </div>
-            <p style={{color:"#55556A",fontSize:12,marginTop:24}}>
-              Your data in Supabase is safe — the crash only affects the display. Reload to start fresh.
+            <p style={{color:"#55556A",fontSize:12,marginTop:20,textAlign:"center"}}>
+              Your data in Supabase is safe — the crash only affects the display.
             </p>
           </div>
         </div>
