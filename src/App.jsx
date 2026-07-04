@@ -1313,8 +1313,21 @@ function CloudSaveModal({onClose,activeSlot,setActiveSlot,state,setState,setUnsa
       }catch{ /* backup failing shouldn't block the save itself */ }
     }
     const passwordHash=password?await simpleHash(password):(force&&existing?.passwordHash?existing.passwordHash:"");
-    // Merge the editPassword into the state before saving
-    const stateToSave={...state,editPassword:localEditPass.trim()};
+    // Strip base64 images before saving to cloud — they're huge and cause load failures.
+    // Images starting with "data:image" are replaced with "" — URLs and other strings kept as-is.
+    const stripImages=(v)=>{
+      if(typeof v==="string")return v.startsWith("data:image")?"":v;
+      if(Array.isArray(v))return v.map(stripImages);
+      if(v&&typeof v==="object"){
+        const out={};
+        for(const k of Object.keys(v)){out[k]=stripImages(v[k]);}
+        return out;
+      }
+      return v;
+    };
+    const stateToSave=stripImages({...state,editPassword:localEditPass.trim()});
+    const sizeEstimate=JSON.stringify(stateToSave).length;
+    if(sizeEstimate>4500000){addToast("Save data too large even without images — try removing some matches","error");setLoading(false);return;}
     const payload={
       name:name.trim(),savedAt:new Date().toISOString(),passwordHash,
       wrestlers:state.wrestlers.length,shows:state.shows.length,
@@ -1343,28 +1356,19 @@ function CloudSaveModal({onClose,activeSlot,setActiveSlot,state,setState,setUnsa
       const d=payload.data;
       if(!d||typeof d!=="object"){addToast("Save data is corrupt or unreadable","error");setLoading(false);return;}
 
-      // Log raw data structure so we can see exactly what the save contains
-      console.log("=== LOAD DEBUG ===");
-      console.log("Keys in save:",Object.keys(d));
-      console.log("wrestlers:",Array.isArray(d.wrestlers),d.wrestlers?.length);
-      console.log("shows:",Array.isArray(d.shows),d.shows?.length);
-      console.log("tagTeams:",Array.isArray(d.tagTeams),d.tagTeams?.length);
-      console.log("championships:",Array.isArray(d.championships),d.championships?.length);
-      console.log("matches:",Array.isArray(d.matches),d.matches?.length);
-      console.log("matchTypes:",Array.isArray(d.matchTypes),d.matchTypes?.length);
-      if(d.matches?.length){
-        console.log("First match sample:",JSON.stringify(d.matches[0]).slice(0,300));
-      }
-      if(d.championships?.length){
-        console.log("First champ sample:",JSON.stringify(d.championships[0]).slice(0,300));
-      }
+      // Strip base64 images — old saves have them embedded which can crash the browser
+      // when trying to parse/render huge strings. Image URLs (http...) are kept.
+      const stripImgs=(v)=>{
+        if(typeof v==="string")return v.startsWith("data:image")?"":v;
+        if(Array.isArray(v))return v.map(stripImgs);
+        if(v&&typeof v==="object"){const o={};for(const k of Object.keys(v)){o[k]=stripImgs(v[k]);}return o;}
+        return v;
+      };
+      const cleaned=stripImgs(d);
 
       let safe;
       try{
-        safe=sanitizeLoadedData(d);
-        console.log("Sanitize succeeded");
-        console.log("safe wrestlers:",safe.wrestlers?.length);
-        console.log("safe matches:",safe.matches?.length);
+        safe=sanitizeLoadedData(cleaned);
       }catch(e){
         console.error("Sanitize FAILED:",e);
         addToast("Save data could not be migrated: "+e.message,"error");
@@ -1374,9 +1378,10 @@ function CloudSaveModal({onClose,activeSlot,setActiveSlot,state,setState,setUnsa
       onClose();
       if(typeof setView==="function")setView("dashboard");
       await new Promise(r=>setTimeout(r,80));
-      console.log("About to setState...");
+      onClose();
+      if(typeof setView==="function")setView("dashboard");
+      await new Promise(r=>setTimeout(r,80));
       setState(s=>({...s,...safe}));
-      console.log("setState called");
       setUnsaved(false);
       setActiveSlot(payload.name);
       if(typeof setEditMode==="function")setEditMode(false);
@@ -1441,9 +1446,13 @@ function CloudSaveModal({onClose,activeSlot,setActiveSlot,state,setState,setUnsa
 
       {tab==="save"&&(
         <div>
-          <div style={{padding:"10px 14px",background:"rgba(229,26,44,0.08)",border:"1px solid rgba(229,26,44,0.2)",borderRadius:6,marginBottom:16,fontSize:13,color:"var(--text-secondary)",lineHeight:1.5}}>
-            <i className="fas fa-globe" style={{color:"var(--primary)",marginRight:6}}/>
-            Saves are <strong style={{color:"var(--text)"}}>shared publicly</strong> — anyone with this app can browse and load them. Add a password to prevent others from overwriting yours.
+          <div style={{padding:"8px 12px",background:"rgba(229,26,44,0.06)",border:"1px solid rgba(229,26,44,0.15)",borderRadius:6,marginBottom:8,fontSize:12,color:"var(--text-secondary)",lineHeight:1.5}}>
+            <i className="fas fa-globe" style={{color:"var(--primary)",marginRight:5}}/>
+            Saves are <strong style={{color:"var(--text)"}}>shared publicly</strong> — anyone with this app can browse and load them. Add a password to prevent others overwriting yours.
+          </div>
+          <div style={{padding:"8px 12px",background:"rgba(255,215,0,0.06)",border:"1px solid rgba(255,215,0,0.15)",borderRadius:6,marginBottom:12,fontSize:12,color:"var(--text-secondary)",lineHeight:1.5}}>
+            <i className="fas fa-circle-info" style={{color:"var(--accent)",marginRight:5}}/>
+            <strong>Images not included</strong> — uploaded photos are stripped to keep saves small. Use <strong>Download JSON</strong> for a full backup with images.
           </div>
           <div className="form-group">
             <label className="form-label">Save Name *</label>
