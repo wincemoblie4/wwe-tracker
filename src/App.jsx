@@ -1348,7 +1348,9 @@ function CloudSaveModal({onClose,activeSlot,setActiveSlot,state,setState,setUnsa
     try{
       const r=await storage.get(slot.key,true);
       if(!r){addToast("Save not found","error");setLoading(false);return;}
-      const payload=JSON.parse(r.value);
+      let payload;
+      try{payload=JSON.parse(r.value);}
+      catch(e){addToast("Save data is corrupt — could not parse","error");setLoading(false);return;}
       if(payload.passwordHash){
         const ph=await simpleHash(password);
         if(ph!==payload.passwordHash){addToast("Wrong password","error");setLoading(false);return;}
@@ -1357,7 +1359,6 @@ function CloudSaveModal({onClose,activeSlot,setActiveSlot,state,setState,setUnsa
       if(!d||typeof d!=="object"){addToast("Save data is corrupt or unreadable","error");setLoading(false);return;}
 
       // Strip base64 images — old saves have them embedded which can crash the browser
-      // when trying to parse/render huge strings. Image URLs (http...) are kept.
       const stripImgs=(v)=>{
         if(typeof v==="string")return v.startsWith("data:image")?"":v;
         if(Array.isArray(v))return v.map(stripImgs);
@@ -1367,28 +1368,23 @@ function CloudSaveModal({onClose,activeSlot,setActiveSlot,state,setState,setUnsa
       const cleaned=stripImgs(d);
 
       let safe;
-      try{
-        safe=sanitizeLoadedData(cleaned);
-      }catch(e){
-        console.error("Sanitize FAILED:",e);
-        addToast("Save data could not be migrated: "+e.message,"error");
-        setLoading(false);return;
-      }
+      try{safe=sanitizeLoadedData(cleaned);}
+      catch(e){addToast("Could not load save: "+e.message,"error");setLoading(false);return;}
 
+      // Close modal and reset view BEFORE setState to avoid render conflicts
       onClose();
       if(typeof setView==="function")setView("dashboard");
-      await new Promise(r=>setTimeout(r,80));
-      onClose();
-      if(typeof setView==="function")setView("dashboard");
-      await new Promise(r=>setTimeout(r,80));
+      if(typeof setEditMode==="function")setEditMode(false);
+      // Small delay lets React flush the close/reset before the big state swap
+      await new Promise(res=>setTimeout(res,80));
       setState(s=>({...s,...safe}));
       setUnsaved(false);
       setActiveSlot(payload.name);
-      if(typeof setEditMode==="function")setEditMode(false);
       addToast(`Loaded "${payload.name}"!`,"success");
     }catch(e){
-      console.error("Load FAILED:",e);
-      addToast("Load failed: "+e.message,"error");
+      // IMPORTANT: on any unexpected error, do NOT close the modal or touch state
+      // Just show the error so the user can try again without a white screen
+      addToast("Load failed — Supabase may be having issues, try again in a moment","error");
     }
     setLoading(false);
   };
