@@ -37,35 +37,75 @@ const INIT_STATE = {
 // Called whenever loading a save (cloud or file). Fills in missing fields with
 // safe defaults so old saves don't crash components that now expect new fields.
 function sanitizeLoadedData(d){
+  if(!d||typeof d!=="object")return{...INIT_STATE};
+  const safeArr=(v)=>Array.isArray(v)?v:[];
+  const safeStr=(v)=>typeof v==="string"?v:"";
+  const safeNum=(v)=>(typeof v==="number"&&!isNaN(v))?v:0;
+  const safeBool=(v)=>typeof v==="boolean"?v:false;
   return {
-    wrestlers: (d.wrestlers||[]).map(w=>({image:"",nickname:"",showId:"",...w})),
-    shows: (d.shows||[]).map(s=>({showType:"weekly",linkedShows:[],pleDate:"",venue:"",image:"",description:"",day:"",...s})),
-    tagTeams: (d.tagTeams||[]).map(t=>{
-      const memberIds=t.memberIds&&t.memberIds.length
-        ?t.memberIds
-        :[t.member1Id,t.member2Id].filter(Boolean);
-      return{member1Id:"",member2Id:"",...t,memberIds};
+    wrestlers: safeArr(d.wrestlers).map(w=>({
+      id:w.id||uid(),name:safeStr(w.name)||"Unknown",
+      nickname:safeStr(w.nickname),showId:safeStr(w.showId),
+      image:safeStr(w.image),createdAt:safeStr(w.createdAt),
+    })),
+    shows: safeArr(d.shows).map(s=>({
+      id:s.id||uid(),name:safeStr(s.name)||"Unknown Show",
+      showType:safeStr(s.showType)||"weekly",color:safeStr(s.color)||"#E51A2C",
+      day:safeStr(s.day),description:safeStr(s.description),
+      image:safeStr(s.image),pleDate:safeStr(s.pleDate),venue:safeStr(s.venue),
+      linkedShows:safeArr(s.linkedShows),
+    })),
+    tagTeams: safeArr(d.tagTeams).map(t=>{
+      const memberIds=safeArr(t.memberIds).length>0
+        ?safeArr(t.memberIds)
+        :[t.member1Id,t.member2Id].filter(x=>typeof x==="string"&&x);
+      return{
+        id:t.id||uid(),name:safeStr(t.name)||"Unknown Team",
+        member1Id:safeStr(t.member1Id),member2Id:safeStr(t.member2Id),memberIds,
+      };
     }),
-    championships: (d.championships||[]).map(c=>({
-      type:"singles",showId:"",image:"",defenses:0,wonDate:null,history:[],...c
+    championships: safeArr(d.championships).map(c=>({
+      id:c.id||uid(),name:safeStr(c.name)||"Unknown Championship",
+      type:safeStr(c.type)||"singles",showId:safeStr(c.showId),
+      image:safeStr(c.image),defenses:safeNum(c.defenses),
+      wonDate:c.wonDate||null,currentHolderId:c.currentHolderId||null,
+      history:safeArr(c.history).map(h=>({
+        holderId:safeStr(h.holderId),wonDate:safeStr(h.wonDate),
+        lostDate:h.lostDate||null,defenses:safeNum(h.defenses),
+        cashedIn:safeBool(h.cashedIn),
+      })),
     })),
-    matches: (d.matches||[]).map(m=>({
-      showId:"",notes:"",tagTeamIds:null,adhocTeams:null,
-      winnerTagTeamId:null,winnerAdhocId:null,slotActiveMembers:null,
-      isChampionshipMatch:false,championshipId:"",championshipIds:[],
-      titleChanged:false,titleChangedFrom:"",titleChangedTo:"",
-      ...m,
-      wrestlers: m.wrestlers||[],
-      winnerIds: m.winnerIds||[],
-      // Migrate single championshipId to array
-      championshipIds: m.championshipIds&&m.championshipIds.length
-        ?m.championshipIds
+    matches: safeArr(d.matches).map(m=>({
+      id:m.id||uid(),
+      date:safeStr(m.date)||new Date().toISOString().slice(0,10),
+      showId:safeStr(m.showId),matchType:safeStr(m.matchType)||"singles",
+      notes:safeStr(m.notes),
+      wrestlers:safeArr(m.wrestlers),
+      winnerIds:safeArr(m.winnerIds),
+      tagTeamIds:m.tagTeamIds?safeArr(m.tagTeamIds):null,
+      adhocTeams:m.adhocTeams?safeArr(m.adhocTeams).map(at=>({
+        id:safeStr(at.id),label:safeStr(at.label),memberIds:safeArr(at.memberIds),
+      })):null,
+      winnerTagTeamId:m.winnerTagTeamId||null,
+      winnerAdhocId:m.winnerAdhocId||null,
+      slotActiveMembers:(m.slotActiveMembers&&typeof m.slotActiveMembers==="object")?m.slotActiveMembers:null,
+      isChampionshipMatch:safeBool(m.isChampionshipMatch),
+      championshipId:safeStr(m.championshipId),
+      championshipIds:safeArr(m.championshipIds).length>0
+        ?safeArr(m.championshipIds)
         :(m.championshipId?[m.championshipId]:[]),
+      titleChanged:safeBool(m.titleChanged),
+      titleChangedFrom:safeStr(m.titleChangedFrom),
+      titleChangedTo:safeStr(m.titleChangedTo),
     })),
-    matchTypes: d.matchTypes&&d.matchTypes.length
-      ?d.matchTypes
+    matchTypes: safeArr(d.matchTypes).length>0
+      ?safeArr(d.matchTypes).map(t=>({
+          id:safeStr(t.id)||uid(),name:safeStr(t.name)||"Match",
+          participants:safeNum(t.participants)||2,
+          isTag:safeBool(t.isTag),isDefault:safeBool(t.isDefault),
+        }))
       :DEFAULT_MATCH_TYPES.map(t=>({...t})),
-    editPassword: d.editPassword||"",
+    editPassword:safeStr(d.editPassword),
   };
 }
 
@@ -81,48 +121,52 @@ function useToasts() {
 }
 
 // ─── Stat helpers ────────────────────────────────────────────────────────────
+// Safe array getter — always returns an array even if field is null/undefined
+const sa=(v)=>Array.isArray(v)?v:[];
+
 function getRecord(wrestlerId, matches) {
   let wins=0,losses=0;
-  matches.forEach(m=>{
-    if(m.wrestlers.includes(wrestlerId)){
-      if(m.winnerIds.includes(wrestlerId)) wins++; else losses++;
+  sa(matches).forEach(m=>{
+    const ws=sa(m.wrestlers);const wi=sa(m.winnerIds);
+    if(ws.includes(wrestlerId)){
+      if(wi.includes(wrestlerId)) wins++; else losses++;
     }
   });
   return {wins,losses,total:wins+losses,pct:(wins+losses)>0?wins/(wins+losses):0};
 }
 function getTagRecord(teamId,matches){
   let wins=0,losses=0;
-  matches.forEach(m=>{
-    if(m.tagTeamIds&&m.tagTeamIds.includes(teamId)){
+  sa(matches).forEach(m=>{
+    if(sa(m.tagTeamIds).includes(teamId)){
       if(m.winnerTagTeamId===teamId) wins++; else losses++;
     }
   });
   return {wins,losses,total:wins+losses,pct:(wins+losses)>0?wins/(wins+losses):0};
 }
 function getRecentForm(wid,matches,count){
-  const rel=matches.filter(m=>m.wrestlers.includes(wid))
+  const rel=sa(matches).filter(m=>sa(m.wrestlers).includes(wid))
     .sort((a,b)=>{const d=new Date(b.date)-new Date(a.date);return d!==0?d:matches.indexOf(b)-matches.indexOf(a);}).slice(0,count);
   if(!rel.length)return 0;
-  return rel.filter(m=>m.winnerIds.includes(wid)).length/rel.length;
+  return rel.filter(m=>sa(m.winnerIds).includes(wid)).length/rel.length;
 }
 function getCurrentChampionships(wid,championships){
-  return championships.filter(c=>c.type==="singles"&&c.currentHolderId===wid);
+  return sa(championships).filter(c=>c.type==="singles"&&c.currentHolderId===wid);
 }
 function getPowerRating(wid,state){
-  const rec=getRecord(wid,state.matches);
-  const recent=getRecentForm(wid,state.matches,5);
-  const champs=getCurrentChampionships(wid,state.championships);
+  const rec=getRecord(wid,sa(state.matches));
+  const recent=getRecentForm(wid,sa(state.matches),5);
+  const champs=getCurrentChampionships(wid,sa(state.championships));
   let defenses=0;
-  state.championships.forEach(c=>{if(c.type==="singles"&&c.currentHolderId===wid)defenses+=c.defenses;});
+  sa(state.championships).forEach(c=>{if(c.type==="singles"&&c.currentHolderId===wid)defenses+=c.defenses;});
   return Math.min(Math.round(rec.pct*45+recent*20+(champs.length?18:0)+Math.min(defenses*3,12)+Math.min(rec.total*0.4,5)),100);
 }
 function getStreak(wid,matches){
-  const rel=matches.filter(m=>m.wrestlers.includes(wid)).sort((a,b)=>{const d=new Date(b.date)-new Date(a.date);return d!==0?d:matches.indexOf(b)-matches.indexOf(a);});
+  const rel=sa(matches).filter(m=>sa(m.wrestlers).includes(wid)).sort((a,b)=>{const d=new Date(b.date)-new Date(a.date);return d!==0?d:matches.indexOf(b)-matches.indexOf(a);});
   if(!rel.length)return 0;
-  const firstIsWin=rel[0].winnerIds.includes(wid);
+  const firstIsWin=sa(rel[0].winnerIds).includes(wid);
   let streak=0;
   for(const m of rel){
-    if(m.winnerIds.includes(wid)===firstIsWin)streak++;
+    if(sa(m.winnerIds).includes(wid)===firstIsWin)streak++;
     else break;
   }
   return firstIsWin?streak:-streak;
@@ -943,10 +987,10 @@ function WrestlerProfile({w,state,onClose}){
   const show=state.shows.find(s=>s.id===w.showId);
   const winPct=rec.total>0?Math.round(rec.pct*100):0;
   const mitbHeld=state.championships.filter(c=>c.type==="mitb"&&c.currentHolderId===w.id);
-  const recentMatches=state.matches.filter(m=>m.wrestlers.includes(w.id)).sort((a,b)=>{const d=new Date(b.date)-new Date(a.date);return d!==0?d:state.matches.indexOf(b)-state.matches.indexOf(a);}).slice(0,10);
-  const allMatches=state.matches.filter(m=>m.wrestlers.includes(w.id)).sort((a,b)=>{const d=new Date(b.date)-new Date(a.date);return d!==0?d:state.matches.indexOf(b)-state.matches.indexOf(a);}).slice(0,15);
+  const recentMatches=sa(state.matches).filter(m=>sa(m.wrestlers).includes(w.id)).sort((a,b)=>{const d=new Date(b.date)-new Date(a.date);return d!==0?d:state.matches.indexOf(b)-state.matches.indexOf(a);}).slice(0,10);
+  const allMatches=sa(state.matches).filter(m=>sa(m.wrestlers).includes(w.id)).sort((a,b)=>{const d=new Date(b.date)-new Date(a.date);return d!==0?d:state.matches.indexOf(b)-state.matches.indexOf(a);}).slice(0,15);
   const pastReigns=[];
-  state.championships.forEach(c=>{if(c.type!=="singles")return;c.history.forEach(h=>{if(h.holderId===w.id)pastReigns.push({c,h});});});
+  sa(state.championships).forEach(c=>{if(c.type!=="singles")return;sa(c.history).forEach(h=>{if(h.holderId===w.id)pastReigns.push({c,h});});});
 
   // Groups this wrestler belongs to
   const myGroups=state.tagTeams.filter(t=>getGroupMembers(t).includes(w.id));
@@ -987,7 +1031,7 @@ function WrestlerProfile({w,state,onClose}){
       {recentMatches.length>0&&<><div style={{fontFamily:"Teko,sans-serif",fontSize:16,fontWeight:600,textTransform:"uppercase",color:"var(--text-muted)",marginBottom:8,borderBottom:"1px solid var(--border)",paddingBottom:4}}>Recent Form</div>
         <div style={{display:"flex",gap:6,marginBottom:16,flexWrap:"wrap",alignItems:"center"}}>
           <span style={{fontSize:12,color:"var(--text-muted)"}}>Last {recentMatches.length}:</span>
-          {recentMatches.map((m,i)=>{const w2=m.winnerIds.includes(w.id);return(<div key={i} style={{width:28,height:28,borderRadius:"50%",background:w2?"var(--success)":"var(--error)",display:"flex",alignItems:"center",justifyContent:"center",fontSize:11,fontWeight:800,color:"#fff"}}>{w2?"W":"L"}</div>);})}
+          {recentMatches.map((m,i)=>{const w2=sa(m.winnerIds).includes(w.id);return(<div key={i} style={{width:28,height:28,borderRadius:"50%",background:w2?"var(--success)":"var(--error)",display:"flex",alignItems:"center",justifyContent:"center",fontSize:11,fontWeight:800,color:"#fff"}}>{w2?"W":"L"}</div>);})}
         </div></>}
       {streak!==0&&<div style={{display:"inline-flex",alignItems:"center",gap:4,padding:"4px 12px",borderRadius:20,fontSize:13,fontWeight:700,marginBottom:16,background:streak>0?"rgba(34,197,94,0.15)":"rgba(239,68,68,0.15)",color:streak>0?"var(--success)":"var(--error)"}}>
         {streak>0?`🔥 ${streak} Win Streak`:`❌ ${Math.abs(streak)} Loss Streak`}
@@ -1032,17 +1076,17 @@ function WrestlerProfile({w,state,onClose}){
       <div style={{fontFamily:"Teko,sans-serif",fontSize:16,fontWeight:600,textTransform:"uppercase",color:"var(--text-muted)",marginTop:12,marginBottom:8,borderBottom:"1px solid var(--border)",paddingBottom:4}}>Match History {allMatches.length>0&&<span style={{fontFamily:"Outfit,sans-serif",fontSize:11,fontWeight:400}}>(Last {allMatches.length})</span>}</div>
       {allMatches.length?<div style={{maxHeight:200,overflowY:"auto"}}>
         {allMatches.map(m=>{
-          const isWin=m.winnerIds.includes(w.id);
+          const mWinnerIds=sa(m.winnerIds);const mWrestlers=sa(m.wrestlers);
+          const isWin=mWinnerIds.includes(w.id);
           const mt=state.matchTypes.find(t=>t.id===m.matchType);
           let opp;
           if(mt?.isTag){
-            // Show only opposing-side members, not the wrestler's own partners
-            const wOnWinningSide=m.winnerIds.includes(w.id);
-            const sameTeam=m.wrestlers.filter(id=>id!==w.id&&(m.winnerIds.includes(id)===wOnWinningSide));
-            const oppIds=m.wrestlers.filter(id=>id!==w.id&&!sameTeam.includes(id));
+            const wOnWinningSide=mWinnerIds.includes(w.id);
+            const sameTeam=mWrestlers.filter(id=>id!==w.id&&(mWinnerIds.includes(id)===wOnWinningSide));
+            const oppIds=mWrestlers.filter(id=>id!==w.id&&!sameTeam.includes(id));
             opp=oppIds.map(id=>(state.wrestlers.find(x=>x.id===id)||{}).name||"?").join(", ")||"N/A";
           }else{
-            opp=m.wrestlers.filter(id=>id!==w.id).map(id=>(state.wrestlers.find(x=>x.id===id)||{}).name||"?").join(", ")||"N/A";
+            opp=mWrestlers.filter(id=>id!==w.id).map(id=>(state.wrestlers.find(x=>x.id===id)||{}).name||"?").join(", ")||"N/A";
           }
           const mShow=state.shows.find(s=>s.id===m.showId);
           return(<div key={m.id} style={{display:"flex",alignItems:"center",gap:8,padding:"6px 0",borderBottom:"1px solid var(--border)",fontSize:13}}>
@@ -1064,7 +1108,7 @@ function ChampionshipProfile({c,state,onClose}){
   const accentColor=isMITB?"var(--success)":"var(--accent)";
   const show=state.shows.find(s=>s.id===c.showId);
   const holderName=c.currentHolderId?(isTag?(state.tagTeams.find(t=>t.id===c.currentHolderId)||{}).name:(state.wrestlers.find(w=>w.id===c.currentHolderId)||{}).name)||"?":"Vacant";
-  const allReigns=[...c.history];
+  const allReigns=[...sa(c.history)];
   if(c.currentHolderId)allReigns.push({holderId:c.currentHolderId,wonDate:c.wonDate,lostDate:null,defenses:c.defenses});
   let longestDays=0,longestHolder="";
   allReigns.forEach(r=>{
@@ -1137,7 +1181,7 @@ function ChampionshipProfile({c,state,onClose}){
               const teamParts=[...groupParts,...adhocParts];
               display=teamParts.map((p,i)=><span key={p.id}>{i>0&&<span style={{fontSize:11,textTransform:"uppercase",color:"var(--text-muted)",margin:"0 4px"}}>vs</span>}<span style={{fontWeight:p.isW?700:400,color:p.isW?"var(--success)":"var(--text-secondary)"}}>{p.name}</span></span>);
             }else{
-              const parts=m.wrestlers.map(wid=>{const isW=m.winnerIds.includes(wid);const name=(state.wrestlers.find(w=>w.id===wid)||{}).name||"?";return{wid,isW,name};});
+              const parts=sa(m.wrestlers).map(wid=>{const isW=sa(m.winnerIds).includes(wid);const name=(state.wrestlers.find(w=>w.id===wid)||{}).name||"?";return{wid,isW,name};});
               display=parts.map((p,i)=><span key={p.wid}>{i>0&&<span style={{fontSize:11,textTransform:"uppercase",color:"var(--text-muted)",margin:"0 4px"}}>vs</span>}<span style={{fontWeight:p.isW?700:400,color:p.isW?"var(--success)":"var(--text-secondary)"}}>{p.name}</span></span>);
             }
             return(<div key={m.id} style={{padding:"8px 0",borderBottom:"1px solid var(--border)"}}>
@@ -1886,10 +1930,10 @@ export default function App(){
       benchedNames:[],isAdhoc:true
     }));
     const participants=mt.isTag?[...groupParticipants,...adhocParticipants]
-      :m.wrestlers.map(wid=>({id:wid,name:wName(wid),isWinner:m.winnerIds.includes(wid)}));
+      :sa(m.wrestlers).map(wid=>({id:wid,name:wName(wid),isWinner:sa(m.winnerIds).includes(wid)}));
     const winnerDisplay=mt.isTag
-      ?(m.winnerTagTeamId?tName(m.winnerTagTeamId):(m.adhocTeams||[]).find(a=>a.id===m.winnerAdhocId)?.label)||"?"
-      :m.winnerIds.map(id=>wName(id)).join(" & ");
+      ?(m.winnerTagTeamId?tName(m.winnerTagTeamId):(sa(m.adhocTeams)).find(a=>a.id===m.winnerAdhocId)?.label)||"?"
+      :sa(m.winnerIds).map(id=>wName(id)).join(" & ");
     return(
       <div className="match-card" style={{borderLeft:m.titleChanged&&isTitle?"3px solid var(--accent)":""}}>
         <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:8,flexWrap:"wrap",gap:6}}>
@@ -2233,9 +2277,9 @@ export default function App(){
       return state.matches.indexOf(b)-state.matches.indexOf(a);
     });
     if(matchSearch){list=list.filter(m=>{
-      const names=m.wrestlers.map(id=>wName(id).toLowerCase());
-      if(m.tagTeamIds)m.tagTeamIds.forEach(tid=>names.push(tName(tid).toLowerCase()));
-      if(m.adhocTeams)m.adhocTeams.forEach(at=>names.push((at.label||"").toLowerCase()));
+      const names=sa(m.wrestlers).map(id=>wName(id).toLowerCase());
+      sa(m.tagTeamIds).forEach(tid=>names.push(tName(tid).toLowerCase()));
+      sa(m.adhocTeams).forEach(at=>names.push((at.label||"").toLowerCase()));
       return names.some(n=>n.includes(matchSearch.toLowerCase()));
     });}
     if(matchShowFilter)list=list.filter(m=>m.showId===matchShowFilter);
