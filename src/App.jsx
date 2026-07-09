@@ -5,7 +5,10 @@ import React, { useState, useEffect, useRef, useCallback } from "react";
 // When deployed as a real site: storage.js provides Supabase-backed storage.
 // We detect which environment we're in at runtime.
 const _isArtifact=typeof window!=="undefined"&&typeof window.storage!=="undefined"&&typeof window.storage.get==="function";
-const isSupabaseConfigured=_isArtifact?true:(typeof process!=="undefined"&&!!process.env?.VITE_SUPABASE_URL);
+// isSupabaseConfigured: true in artifact (uses window.storage), true in deployed site
+// (storage.js handles the actual Supabase check), false if neither.
+// We optimistically assume configured in deployed context — doLoad/doSave handle errors.
+const isSupabaseConfigured=_isArtifact||typeof window!=="undefined";
 const storage=_isArtifact?window.storage:{
   get:async(key,shared)=>{
     try{const m=await import("./storage.js");return m.storage.get(key,shared);}catch{throw new Error("Storage not configured");}
@@ -2002,7 +2005,7 @@ export default function App(){
           {m.notes&&<span> — <span style={{fontStyle:"italic"}}>{m.notes}</span></span>}
         </div>
         {m.titleChanged&&isTitle&&<div style={{marginTop:8,padding:"6px 10px",background:"linear-gradient(90deg,rgba(212,175,55,0.12),transparent)",borderRadius:6,fontSize:12,color:"var(--accent)",fontWeight:500}}>
-          <i className="fas fa-repeat"/> {m.titleChangedFrom?<><strong>NEW {champ?.name?.toUpperCase()||"CHAMPION"}!</strong> {m.titleChangedTo} defeats {m.titleChangedFrom}</>:<><strong>{m.titleChangedTo}</strong> wins the vacant {champ?.name||"championship"}</>}
+          <i className="fas fa-repeat"/> {m.titleChangedFrom?<><strong>NEW {(champs[0]?.name||"CHAMPIONSHIP").toUpperCase()}!</strong> {m.titleChangedTo} defeats {m.titleChangedFrom}</>:<><strong>{m.titleChangedTo}</strong> wins the vacant {champs[0]?.name||"championship"}</>}
         </div>}
       </div>
     );
@@ -2481,6 +2484,7 @@ export default function App(){
         .form-input:focus,.form-select:focus,.form-textarea:focus{outline:none;border-color:var(--primary);box-shadow:0 0 0 3px var(--primary-glow);}
         .form-select{appearance:none;cursor:pointer;background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12'%3E%3Cpath fill='%238A8AA0' d='M6 8L1 3h10z'/%3E%3C/svg%3E");background-repeat:no-repeat;background-position:right 12px center;padding-right:32px;}
         .form-textarea{resize:vertical;min-height:70px;}
+        .form-hint{font-size:12px;color:var(--text-muted);margin-top:4px;line-height:1.4;}
         .modal-overlay{position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,0.8);display:flex;align-items:center;justify-content:center;z-index:200;padding:16px;animation:fadeIn 0.2s ease;}
         .modal{background:var(--bg-surface);border:1px solid var(--border);border-radius:var(--radius);width:100%;max-height:85vh;overflow-y:auto;box-shadow:0 8px 40px rgba(0,0,0,0.6);animation:slideUp 0.25s ease;}
         .modal-header{display:flex;align-items:center;justify-content:space-between;padding:18px 20px;border-bottom:1px solid var(--border);position:sticky;top:0;background:var(--bg-surface);z-index:1;}
