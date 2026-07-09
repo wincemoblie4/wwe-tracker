@@ -1942,7 +1942,7 @@ export default function App(){
       const activeMids=(m.slotActiveMembers&&m.slotActiveMembers[tid]&&m.slotActiveMembers[tid].length>0)
         ?m.slotActiveMembers[tid]
         :fullMids;
-      const benchedMids=fullMids.filter(m=>!activeMids.includes(m));
+      const benchedMids=fullMids.filter(mid=>!activeMids.includes(mid));
       return {
         id:tid,
         name:tName(tid),
