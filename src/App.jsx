@@ -1665,7 +1665,7 @@ function EditPasswordModal({onUnlock,onClose,editPassword}){
 }
 
 // ─── Main App ─────────────────────────────────────────────────────────────────
-export default function App(){
+function App(){
   // Only inject fonts/icons if index.html hasn't already loaded them (e.g. when used as a standalone artifact)
   useExternalCSS("https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css");
   useExternalCSS("https://fonts.googleapis.com/css2?family=Teko:wght@400;500;600;700&family=Outfit:wght@300;400;500;600;700&display=swap");
