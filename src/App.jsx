@@ -1,28 +1,5 @@
 import React, { useState, useEffect, useRef, useCallback } from "react";
-
-// ─── Storage adapter ──────────────────────────────────────────────────────────
-// When running as a Claude artifact: window.storage is injected by Claude's runtime.
-// When deployed as a real site: storage.js provides Supabase-backed storage.
-// We detect which environment we're in at runtime.
-const _isArtifact=typeof window!=="undefined"&&typeof window.storage!=="undefined"&&typeof window.storage.get==="function";
-// isSupabaseConfigured: true in artifact (uses window.storage), true in deployed site
-// (storage.js handles the actual Supabase check), false if neither.
-// We optimistically assume configured in deployed context — doLoad/doSave handle errors.
-const isSupabaseConfigured=_isArtifact||typeof window!=="undefined";
-const storage=_isArtifact?window.storage:{
-  get:async(key,shared)=>{
-    try{const m=await import("./storage.js");return m.storage.get(key,shared);}catch{throw new Error("Storage not configured");}
-  },
-  set:async(key,value,shared)=>{
-    try{const m=await import("./storage.js");return m.storage.set(key,value,shared);}catch{throw new Error("Storage not configured");}
-  },
-  delete:async(key,shared)=>{
-    try{const m=await import("./storage.js");return m.storage.delete(key,shared);}catch{throw new Error("Storage not configured");}
-  },
-  list:async(prefix,shared)=>{
-    try{const m=await import("./storage.js");return m.storage.list(prefix,shared);}catch{return{keys:[]};}
-  },
-};
+import { storage, isSupabaseConfigured } from "./storage.js";
 
 // ─── Inject external deps ────────────────────────────────────────────────────
 function useExternalCSS(href){
