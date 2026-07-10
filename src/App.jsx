@@ -72,7 +72,7 @@ function sanitizeLoadedData(d){
       history:safeArr(c.history).map(h=>({
         holderId:safeStr(h.holderId),wonDate:safeStr(h.wonDate),
         lostDate:h.lostDate||null,defenses:safeNum(h.defenses),
-        cashedIn:safeBool(h.cashedIn),
+        cashedIn:safeBool(h.cashedIn),vacated:safeBool(h.vacated),
       })),
     })),
     matches: safeArr(d.matches).map(m=>({
@@ -273,11 +273,11 @@ function Modal({title,onClose,footer,children,maxWidth=520}){
   );
 }
 
-function ConfirmModal({message,onConfirm,onClose}){
+function ConfirmModal({message,onConfirm,onClose,confirmLabel="Delete",confirmClass="btn-danger"}){
   return(
     <Modal title="Confirm" onClose={onClose} footer={
       <><button className="btn btn-secondary" onClick={onClose}>Cancel</button>
-      <button className="btn btn-danger" onClick={()=>{onConfirm();onClose();}}>Delete</button></>
+      <button className={`btn ${confirmClass}`} onClick={()=>{onConfirm();onClose();}}>{confirmLabel}</button></>
     }>
       <p style={{color:"var(--text-secondary)",lineHeight:1.5}} dangerouslySetInnerHTML={{__html:message}}/>
     </Modal>
@@ -528,7 +528,14 @@ function ChampionshipModal({champ,shows,wrestlers,tagTeams,onSave,onClose}){
 //   {kind:"adhoc", id, label, memberIds:[...]}    — a one-off team built just for this match
 function MatchModal({match,state,onSave,onClose,toast}){
   const [matchType,setMatchType]=useState(match?.matchType||"singles");
-  const [selWrestlers,setSelWrestlers]=useState(match?.wrestlers||[]);
+  const [selWrestlers,setSelWrestlers]=useState(()=>{
+    if(!match)return[];
+    // Don't pre-populate for tag matches — wrestlers array contains all member IDs from all teams
+    const mt0=match.matchType;
+    const isTagMatch=match.tagTeamIds&&match.tagTeamIds.length>0;
+    if(isTagMatch)return[];
+    return match.wrestlers||[];
+  });
   const [winnerId,setWinnerId]=useState(match?.winnerIds?.[0]||null);
   const [date,setDate]=useState(match?.date||new Date().toISOString().slice(0,10));
   const [showId,setShowId]=useState(match?.showId||"");
@@ -1160,7 +1167,7 @@ function ChampionshipProfile({c,state,onClose}){
             <div style={{fontFamily:"Teko,sans-serif",fontSize:20,fontWeight:700,color:isCur?"var(--accent)":"var(--text-muted)",minWidth:24,textAlign:"center",lineHeight:1,paddingTop:2}}>{allReigns.length-idx}</div>
             <div style={{flex:1}}>
               <div style={{fontWeight:600,fontSize:14}}>{hName}{isCur&&<span style={{fontSize:10,fontWeight:700,textTransform:"uppercase",background:"var(--accent)",color:"#000",padding:"1px 6px",borderRadius:3,marginLeft:6}}>Current</span>}</div>
-              <div style={{fontSize:12,color:"var(--text-muted)"}}>{fmtDate(h.wonDate)}{h.lostDate?" — "+fmtDate(h.lostDate):" — Present"} · {days}d{!isMITB?" · "+(h.defenses||0)+" def.":""}</div>
+              <div style={{fontSize:12,color:"var(--text-muted)"}}>{fmtDate(h.wonDate)}{h.lostDate?" — "+fmtDate(h.lostDate):" — Present"} · {days}d{!isMITB?" · "+(h.defenses||0)+" def.":""}{h.vacated?<span style={{marginLeft:6,fontSize:11,fontWeight:700,color:"var(--error)",textTransform:"uppercase"}}>Vacated</span>:""}</div>
             </div>
           </div>);
         })}
@@ -1749,6 +1756,24 @@ function App(){
     addToast(id?"Championship updated":"Championship added","success");
   };
   const deleteChampionship=(id)=>{mutate(s=>{s.championships=s.championships.filter(x=>x.id!==id);});addToast("Championship deleted","success");};
+  const vacateChampionship=(id)=>{
+    mutate(s=>{
+      const c=s.championships.find(x=>x.id===id);
+      if(!c||!c.currentHolderId)return;
+      // Push current reign into history before vacating
+      c.history.push({
+        holderId:c.currentHolderId,
+        wonDate:c.wonDate,
+        lostDate:new Date().toISOString(),
+        defenses:c.defenses,
+        vacated:true,
+      });
+      c.currentHolderId=null;
+      c.defenses=0;
+      c.wonDate=null;
+    });
+    addToast("Championship vacated","success");
+  };
   
   const saveMatch=(id,data)=>{
     mutate(s=>{
@@ -2241,7 +2266,14 @@ function App(){
                 <div style={{fontFamily:"Teko,sans-serif",fontSize:20,fontWeight:600,textTransform:"uppercase"}}>{c.currentHolderId?holderName:<span style={{color:"var(--text-muted)",fontStyle:"italic"}}>{isMITB?"Unclaimed":"Vacant"}</span>}</div>
                 {!isMITB&&c.currentHolderId&&<div style={{fontSize:13,color:"var(--accent)",fontWeight:600}}><i className="fas fa-shield-halved"/> {c.defenses} defense{c.defenses!==1?"s":""}</div>}
               </div>
-              {isMITB&&c.currentHolderId&&editMode&&<button className="btn-cashin" onClick={e=>{e.stopPropagation();setModal({type:"cashIn",data:c});}}><i className="fas fa-bolt"/> Cash In</button>}
+              <div style={{display:"flex",flexDirection:"column",gap:4,alignItems:"flex-end"}}>
+                {isMITB&&c.currentHolderId&&editMode&&<button className="btn-cashin" onClick={e=>{e.stopPropagation();setModal({type:"cashIn",data:c});}}><i className="fas fa-bolt"/> Cash In</button>}
+                {c.currentHolderId&&editMode&&<button
+                  onClick={e=>{e.stopPropagation();setConfirm({msg:`Vacate <strong>${c.name}</strong>? The current reign will be saved to title history.`,fn:()=>vacateChampionship(c.id),confirmLabel:"Vacate",confirmClass:"btn-secondary"});}}
+                  style={{padding:"4px 10px",borderRadius:"var(--radius-sm)",border:"1px solid rgba(239,68,68,0.4)",background:"rgba(239,68,68,0.08)",color:"var(--error)",fontSize:12,fontWeight:600,cursor:"pointer",fontFamily:"Outfit,sans-serif",whiteSpace:"nowrap"}}>
+                  <i className="fas fa-ban"/> Vacate
+                </button>}
+              </div>
             </div>
           </div>);
         })}
@@ -2561,7 +2593,7 @@ function App(){
       {profileModal?.type==="championship"&&<ChampionshipProfile c={profileModal.data} state={state} onClose={()=>setProfileModal(null)}/>}
 
       {/* Confirm */}
-      {confirm&&<ConfirmModal message={confirm.msg} onConfirm={confirm.fn} onClose={()=>setConfirm(null)}/>}
+      {confirm&&<ConfirmModal message={confirm.msg} onConfirm={confirm.fn} onClose={()=>setConfirm(null)} confirmLabel={confirm.confirmLabel} confirmClass={confirm.confirmClass}/>}
 
       {/* Toasts */}
       <div className="toast-container">
