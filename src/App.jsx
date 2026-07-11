@@ -484,11 +484,12 @@ function ChampionshipModal({champ,shows,wrestlers,tagTeams,onSave,onClose}){
   const [showId,setShowId]=useState(champ?.showId||"");
   const [holderId,setHolderId]=useState(champ?.currentHolderId||"");
   const [image,setImage]=useState(champ?.image||"");
+  const [wonDate,setWonDate]=useState(champ?.wonDate?champ.wonDate.slice(0,10):new Date().toISOString().slice(0,10));
   const weekly=shows.filter(s=>(s.showType||"weekly")==="weekly");
   const holders=type==="tag"?tagTeams:wrestlers;
   const save=()=>{
     if(!name.trim()){alert("Name required");return;}
-    onSave({name:name.trim(),type,showId,holderId,image});
+    onSave({name:name.trim(),type,showId,holderId,image,wonDate:holderId?wonDate:null});
     onClose();
   };
   return(
@@ -518,6 +519,11 @@ function ChampionshipModal({champ,shows,wrestlers,tagTeams,onSave,onClose}){
           {holders.map(h=><option key={h.id} value={h.id}>{h.name}</option>)}
         </select>
       </div>
+      {holderId&&<div className="form-group">
+        <label className="form-label">{type==="mitb"?"Date Briefcase Won":"Title Won Date"}</label>
+        <input type="date" className="form-input" value={wonDate} onChange={e=>setWonDate(e.target.value)}/>
+        <div className="form-hint">Used to calculate reign length and days as champion.</div>
+      </div>}
     </Modal>
   );
 }
@@ -1772,20 +1778,26 @@ function App(){
     });
     addToast("Tag team deleted","success");
   };
-  const saveChampionship=(id,{name,type,showId,holderId,image})=>{
+  const saveChampionship=(id,{name,type,showId,holderId,image,wonDate})=>{
+    const wd=wonDate||new Date().toISOString().slice(0,10);
     mutate(s=>{
       if(id){
         const c=s.championships.find(x=>x.id===id);
         if(c){
           c.name=name;c.showId=showId;c.image=image||"";
-          if(c.type!==type){c.type=type;c.currentHolderId=holderId||null;c.defenses=0;c.wonDate=holderId?new Date().toISOString():null;c.history=[];}
-          else if(c.currentHolderId!==holderId){
-            if(c.currentHolderId)c.history.push({holderId:c.currentHolderId,wonDate:c.wonDate,lostDate:new Date().toISOString(),defenses:c.defenses});
-            c.currentHolderId=holderId||null;c.defenses=0;c.wonDate=holderId?new Date().toISOString():null;
+          if(c.type!==type){
+            c.type=type;c.currentHolderId=holderId||null;
+            c.defenses=0;c.wonDate=holderId?wd:null;c.history=[];
+          }else if(c.currentHolderId!==holderId){
+            if(c.currentHolderId)c.history.push({holderId:c.currentHolderId,wonDate:c.wonDate,lostDate:wd,defenses:c.defenses});
+            c.currentHolderId=holderId||null;c.defenses=0;c.wonDate=holderId?wd:null;
+          }else if(c.currentHolderId===holderId&&holderId){
+            // Same holder — allow updating the wonDate if changed
+            c.wonDate=wd;
           }
         }
       }else{
-        s.championships.push({id:uid(),name,type,showId,image:image||"",currentHolderId:holderId||null,defenses:0,wonDate:holderId?new Date().toISOString():null,history:[]});
+        s.championships.push({id:uid(),name,type,showId,image:image||"",currentHolderId:holderId||null,defenses:0,wonDate:holderId?wd:null,history:[]});
       }
     });
     addToast(id?"Championship updated":"Championship added","success");
