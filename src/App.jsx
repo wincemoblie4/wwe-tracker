@@ -1570,6 +1570,40 @@ function CloudSaveModal({onClose,activeSlot,setActiveSlot,state,setState,setUnsa
   );
 }
 
+// ─── Vacate Modal ─────────────────────────────────────────────────────────────
+function VacateModal({champ,onVacate,onClose}){
+  const [vacateDate,setVacateDate]=useState(new Date().toISOString().slice(0,10));
+  const confirm=()=>{
+    if(!vacateDate){alert("Please select a date");return;}
+    onVacate(champ.id,vacateDate);
+    onClose();
+  };
+  return(
+    <Modal title="Vacate Championship" onClose={onClose} maxWidth={400}
+      footer={<>
+        <button className="btn btn-secondary" onClick={onClose}>Cancel</button>
+        <button className="btn btn-secondary" style={{borderColor:"var(--error)",color:"var(--error)"}} onClick={confirm}>
+          <i className="fas fa-ban"/> Vacate
+        </button>
+      </>}>
+      <div style={{textAlign:"center",marginBottom:16}}>
+        {champ.image
+          ?<img src={champ.image} alt="" style={{width:72,height:72,objectFit:"contain",marginBottom:8,display:"block",margin:"0 auto 8px"}}/>
+          :<i className="fas fa-trophy" style={{fontSize:36,color:"var(--accent)",display:"block",marginBottom:8}}/>
+        }
+        <div style={{fontFamily:"Teko,sans-serif",fontSize:22,fontWeight:700,textTransform:"uppercase",color:"var(--accent)"}}>{champ.name}</div>
+      </div>
+      <p style={{fontSize:13,color:"var(--text-secondary)",lineHeight:1.6,marginBottom:16}}>
+        The current reign will be saved to title history as <strong style={{color:"var(--error)"}}>Vacated</strong> on the date below. The championship will become vacant.
+      </p>
+      <div className="form-group">
+        <label className="form-label">Vacated Date</label>
+        <input type="date" className="form-input" value={vacateDate} onChange={e=>setVacateDate(e.target.value)}/>
+      </div>
+    </Modal>
+  );
+}
+
 // ─── Error Boundary ───────────────────────────────────────────────────────────
 // Catches any render crash (e.g. from corrupt/unexpected save data) and shows
 // a friendly recovery screen instead of a blank white page.
@@ -1658,6 +1692,7 @@ function App(){
   const [unsaved,setUnsaved]=useState(false);
   const [editMode,setEditMode]=useState(false);
   const [editPasswordModal,setEditPasswordModal]=useState(false);
+  const [vacateModal,setVacateModal]=useState(null); // championship object
   const [toasts,addToast]=useToasts();
   const [rosterSearch,setRosterSearch]=useState("");
   const [rosterShowFilter,setRosterShowFilter]=useState("");
@@ -1756,15 +1791,15 @@ function App(){
     addToast(id?"Championship updated":"Championship added","success");
   };
   const deleteChampionship=(id)=>{mutate(s=>{s.championships=s.championships.filter(x=>x.id!==id);});addToast("Championship deleted","success");};
-  const vacateChampionship=(id)=>{
+  const vacateChampionship=(id,vacateDate)=>{
     mutate(s=>{
       const c=s.championships.find(x=>x.id===id);
       if(!c||!c.currentHolderId)return;
-      // Push current reign into history before vacating
+      const date=vacateDate||new Date().toISOString().slice(0,10);
       c.history.push({
         holderId:c.currentHolderId,
         wonDate:c.wonDate,
-        lostDate:new Date().toISOString(),
+        lostDate:date,
         defenses:c.defenses,
         vacated:true,
       });
@@ -1857,7 +1892,7 @@ function App(){
         if(defendingChamp)target.history.push({holderId:defendingChamp,wonDate:target.wonDate,lostDate:cashDate,defenses:target.defenses});
         target.currentHolderId=cashInHolder;target.defenses=0;target.wonDate=cashDate;
       }
-      s.matches.push({id:uid(),date:cashDate,showId:"",matchType:"singles",wrestlers:matchWrestlers,tagTeamIds:[],winnerIds,winnerTagTeamId:null,isChampionshipMatch:true,championshipId:targetId,notes:"MITB Cash In ("+mitb.name+") — "+(result==="won"?"Successful":"Failed"),titleChanged:result==="won",titleChangedFrom:result==="won"&&defendingChamp?(s.wrestlers.find(w=>w.id===defendingChamp)||{}).name||"":"",titleChangedTo:result==="won"?(s.wrestlers.find(w=>w.id===cashInHolder)||{}).name||"":""});
+      s.matches.push({id:uid(),date:cashDate,showId:"",matchType:"singles",wrestlers:matchWrestlers,tagTeamIds:[],winnerIds,winnerTagTeamId:null,isChampionshipMatch:true,championshipId:targetId,championshipIds:[targetId],notes:"MITB Cash In ("+mitb.name+") — "+(result==="won"?"Successful":"Failed"),titleChanged:result==="won",titleChangedFrom:result==="won"&&defendingChamp?(s.wrestlers.find(w=>w.id===defendingChamp)||{}).name||"":"",titleChangedTo:result==="won"?(s.wrestlers.find(w=>w.id===cashInHolder)||{}).name||"":""});
     });
     addToast(result==="won"?"Cashed in successfully! New champion crowned!":"Cash in failed!",result==="won"?"success":"error");
   };
@@ -2269,7 +2304,7 @@ function App(){
               <div style={{display:"flex",flexDirection:"column",gap:4,alignItems:"flex-end"}}>
                 {isMITB&&c.currentHolderId&&editMode&&<button className="btn-cashin" onClick={e=>{e.stopPropagation();setModal({type:"cashIn",data:c});}}><i className="fas fa-bolt"/> Cash In</button>}
                 {c.currentHolderId&&editMode&&<button
-                  onClick={e=>{e.stopPropagation();setConfirm({msg:`Vacate <strong>${c.name}</strong>? The current reign will be saved to title history.`,fn:()=>vacateChampionship(c.id),confirmLabel:"Vacate",confirmClass:"btn-secondary"});}}
+                  onClick={e=>{e.stopPropagation();setVacateModal(c);}}
                   style={{padding:"4px 10px",borderRadius:"var(--radius-sm)",border:"1px solid rgba(239,68,68,0.4)",background:"rgba(239,68,68,0.08)",color:"var(--error)",fontSize:12,fontWeight:600,cursor:"pointer",fontFamily:"Outfit,sans-serif",whiteSpace:"nowrap"}}>
                   <i className="fas fa-ban"/> Vacate
                 </button>}
@@ -2562,6 +2597,7 @@ function App(){
 
       {/* Edit Password Modal */}
       {editPasswordModal&&<EditPasswordModal onUnlock={()=>setEditMode(true)} onClose={()=>setEditPasswordModal(false)} editPassword={state.editPassword}/>}
+      {vacateModal&&<VacateModal champ={vacateModal} onVacate={vacateChampionship} onClose={()=>setVacateModal(null)}/>}
 
       {/* Cloud Save Modal */}
       {cloudModal&&<CloudSaveModal
