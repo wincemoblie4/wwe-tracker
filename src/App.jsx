@@ -997,13 +997,29 @@ function WrestlerProfile({w,state,onClose}){
   const rating=getPowerRating(w.id,state);
   const streak=getStreak(w.id,state.matches);
   const champs=getCurrentChampionships(w.id,state.championships);
+  // Also find tag championships held by a group this wrestler is in
+  const tagChamps=sa(state.championships).filter(c=>{
+    if(c.type!=="tag"||!c.currentHolderId)return false;
+    const t=state.tagTeams.find(x=>x.id===c.currentHolderId);
+    return t&&getGroupMembers(t).includes(w.id);
+  });
   const show=state.shows.find(s=>s.id===w.showId);
   const winPct=rec.total>0?Math.round(rec.pct*100):0;
   const mitbHeld=state.championships.filter(c=>c.type==="mitb"&&c.currentHolderId===w.id);
   const recentMatches=sa(state.matches).filter(m=>sa(m.wrestlers).includes(w.id)).sort((a,b)=>{const d=new Date(b.date)-new Date(a.date);return d!==0?d:state.matches.indexOf(b)-state.matches.indexOf(a);}).slice(0,10);
   const allMatches=sa(state.matches).filter(m=>sa(m.wrestlers).includes(w.id)).sort((a,b)=>{const d=new Date(b.date)-new Date(a.date);return d!==0?d:state.matches.indexOf(b)-state.matches.indexOf(a);}).slice(0,15);
   const pastReigns=[];
-  sa(state.championships).forEach(c=>{if(c.type!=="singles")return;sa(c.history).forEach(h=>{if(h.holderId===w.id)pastReigns.push({c,h});});});
+  sa(state.championships).forEach(c=>{
+    if(c.type==="mitb")return;
+    sa(c.history).forEach(h=>{
+      if(c.type==="singles"&&h.holderId===w.id){pastReigns.push({c,h});}
+      else if(c.type==="tag"){
+        const t=state.tagTeams.find(x=>x.id===h.holderId);
+        if(t&&getGroupMembers(t).includes(w.id))pastReigns.push({c,h,teamName:t.name});
+      }
+    });
+  });
+  pastReigns.sort((a,b)=>new Date(b.h.wonDate)-new Date(a.h.wonDate));
 
   // Groups this wrestler belongs to
   const myGroups=state.tagTeams.filter(t=>getGroupMembers(t).includes(w.id));
@@ -1054,11 +1070,24 @@ function WrestlerProfile({w,state,onClose}){
           <i className="fas fa-briefcase" style={{color:"var(--success)",fontSize:20}}/>
           <div><div style={{fontWeight:600,fontSize:14,color:"var(--success)"}}>{c.name}</div><div style={{fontSize:12,color:"var(--text-muted)"}}>Briefcase Holder</div></div>
         </div>)}</>}
-      {champs.length>0&&<><div style={{fontFamily:"Teko,sans-serif",fontSize:16,fontWeight:600,textTransform:"uppercase",color:"var(--text-muted)",marginBottom:8,borderBottom:"1px solid var(--border)",paddingBottom:4}}>Current Championships</div>
-        {champs.map(c=><div key={c.id} style={{display:"flex",alignItems:"center",gap:10,padding:"8px 10px",background:"var(--bg-input)",borderRadius:6,marginBottom:6,border:"1px solid rgba(255,215,0,0.15)"}}>
-          {c.image?<img src={c.image} alt="" style={{width:32,height:32,objectFit:"contain"}}/>:<i className="fas fa-trophy" style={{color:"var(--accent)",fontSize:20}}/>}
-          <div><div style={{fontWeight:600,fontSize:14,color:"var(--accent)"}}>{c.name}</div><div style={{fontSize:12,color:"var(--text-muted)"}}>{c.defenses} defense{c.defenses!==1?"s":""}</div></div>
-        </div>)}</>}
+      {(champs.length>0||tagChamps.length>0)&&<><div style={{fontFamily:"Teko,sans-serif",fontSize:16,fontWeight:600,textTransform:"uppercase",color:"var(--text-muted)",marginBottom:8,borderBottom:"1px solid var(--border)",paddingBottom:4}}>Current Championships</div>
+        {[...champs,...tagChamps].map(c=>{
+          const days=c.wonDate?Math.max(1,Math.ceil((new Date()-new Date(c.wonDate))/86400000)):null;
+          const isTag=c.type==="tag";
+          const teamName=isTag?(state.tagTeams.find(t=>t.id===c.currentHolderId)||{}).name||"":null;
+          return(<div key={c.id} style={{display:"flex",alignItems:"center",gap:10,padding:"8px 10px",background:"var(--bg-input)",borderRadius:6,marginBottom:6,border:"1px solid rgba(255,215,0,0.15)"}}>
+            {c.image?<img src={c.image} alt="" style={{width:32,height:32,objectFit:"contain"}}/>:<i className="fas fa-trophy" style={{color:"var(--accent)",fontSize:20}}/>}
+            <div>
+              <div style={{fontWeight:600,fontSize:14,color:"var(--accent)"}}>{c.name}</div>
+              <div style={{fontSize:12,color:"var(--text-muted)"}}>
+                {isTag&&teamName&&<span style={{marginRight:6}}>w/ {teamName} ·</span>}
+                {c.defenses} defense{c.defenses!==1?"s":""}
+                {c.wonDate&&<span> · <i className="fas fa-calendar"/> Since {fmtDate(c.wonDate)}</span>}
+                {days&&<span> · {days} day{days!==1?"s":""}</span>}
+              </div>
+            </div>
+          </div>);
+        })}</>}
       {myGroups.length>0&&<><div style={{fontFamily:"Teko,sans-serif",fontSize:16,fontWeight:600,textTransform:"uppercase",color:"var(--text-muted)",marginTop:12,marginBottom:8,borderBottom:"1px solid var(--border)",paddingBottom:4}}>Groups & Affiliations</div>
         {myGroups.map(t=>{
           const mids=getGroupMembers(t);const n=mids.length;const col=groupTypeColor(n);
@@ -1081,10 +1110,21 @@ function WrestlerProfile({w,state,onClose}){
         })}</>}
       {pastReigns.length>0&&<><div style={{fontFamily:"Teko,sans-serif",fontSize:16,fontWeight:600,textTransform:"uppercase",color:"var(--text-muted)",marginTop:12,marginBottom:8,borderBottom:"1px solid var(--border)",paddingBottom:4}}>Past Reigns</div>
         <div style={{maxHeight:200,overflowY:"auto"}}>
-          {pastReigns.map(({c,h},i)=><div key={i} style={{display:"flex",alignItems:"center",gap:8,padding:"6px 0",borderBottom:"1px solid var(--border)",fontSize:13}}>
-            <i className="fas fa-trophy" style={{color:"var(--accent-dim)",fontSize:12,flexShrink:0}}/>
-            <div><span style={{fontWeight:600,color:"var(--accent-dim)"}}>{c.name}</span><div style={{fontSize:11,color:"var(--text-muted)"}}>{fmtDate(h.wonDate)}{h.lostDate?" – "+fmtDate(h.lostDate):""} · {h.defenses} def.</div></div>
-          </div>)}
+          {pastReigns.map(({c,h,teamName},i)=>{
+            const days=h.wonDate&&h.lostDate?Math.max(1,Math.ceil((new Date(h.lostDate)-new Date(h.wonDate))/86400000)):null;
+            return(<div key={i} style={{display:"flex",alignItems:"center",gap:8,padding:"6px 0",borderBottom:"1px solid var(--border)",fontSize:13}}>
+              <i className="fas fa-trophy" style={{color:"var(--accent-dim)",fontSize:12,flexShrink:0}}/>
+              <div>
+                <span style={{fontWeight:600,color:"var(--accent-dim)"}}>{c.name}</span>
+                {teamName&&<span style={{fontSize:11,color:"var(--text-muted)",marginLeft:5}}>w/ {teamName}</span>}
+                {h.vacated&&<span style={{marginLeft:6,fontSize:10,fontWeight:700,textTransform:"uppercase",color:"var(--error)"}}>Vacated</span>}
+                <div style={{fontSize:11,color:"var(--text-muted)"}}>
+                  {fmtDate(h.wonDate)}{h.lostDate?" – "+fmtDate(h.lostDate):""}
+                  {days?` · ${days} day${days!==1?"s":""}`:""} · {h.defenses} def.
+                </div>
+              </div>
+            </div>);
+          })}
         </div></>}
       <div style={{fontFamily:"Teko,sans-serif",fontSize:16,fontWeight:600,textTransform:"uppercase",color:"var(--text-muted)",marginTop:12,marginBottom:8,borderBottom:"1px solid var(--border)",paddingBottom:4}}>Match History {allMatches.length>0&&<span style={{fontFamily:"Outfit,sans-serif",fontSize:11,fontWeight:400}}>(Last {allMatches.length})</span>}</div>
       {allMatches.length?<div style={{maxHeight:200,overflowY:"auto"}}>
@@ -2091,10 +2131,12 @@ function App(){
           <div className="dash-section-title"><i className="fas fa-ranking-star"/> Top 5 Power Rankings</div>
           <div className="ranking-list">
             {top5.map((w,i)=>{const rec=getRecord(w.id,state.matches);const rating=getPowerRating(w.id,state);const champs=getCurrentChampionships(w.id,state.championships);
+              const tagChamps=sa(state.championships).filter(c=>{if(c.type!=="tag"||!c.currentHolderId)return false;const t=state.tagTeams.find(x=>x.id===c.currentHolderId);return t&&getGroupMembers(t).includes(w.id);});
+              const allChamps=[...champs,...tagChamps];
               return(<div key={w.id} className="ranking-item" style={{cursor:"pointer"}} onClick={()=>setProfileModal({type:"wrestler",data:w})}>
                 <div className="rank-number">{i+1}</div>
                 <div className="rank-info">
-                  <div className="rank-name">{w.name}{champs.map(c=><i key={c.id} className="fas fa-trophy rank-champ-icon" title={c.name}/>)}</div>
+                  <div className="rank-name">{w.name}{allChamps.map(c=><i key={c.id} className="fas fa-trophy rank-champ-icon" title={c.name}/>)}</div>
                   <div className="rank-stats"><span className="badge-win">{rec.wins}W</span> <span className="badge-loss">{rec.losses}L</span> <span>{Math.round(rec.pct*100)}%</span></div>
                 </div>
                 <div className="rank-rating"><div className="rating-value">{rating}</div><div className="rating-label">PWR</div></div>
@@ -2131,6 +2173,8 @@ function App(){
         {list.length?<div className="card-grid">
           {list.map(w=>{
             const rec=getRecord(w.id,state.matches);const champs=getCurrentChampionships(w.id,state.championships);
+            const tagChamps=sa(state.championships).filter(c=>{if(c.type!=="tag"||!c.currentHolderId)return false;const t=state.tagTeams.find(x=>x.id===c.currentHolderId);return t&&getGroupMembers(t).includes(w.id);});
+            const allChamps=[...champs,...tagChamps];
             const show=state.shows.find(s=>s.id===w.showId);const winPct=rec.total>0?Math.round(rec.pct*100):0;
             return(<div key={w.id} className="card" style={{cursor:"pointer"}} onClick={e=>{if(!e.target.closest(".card-actions"))setProfileModal({type:"wrestler",data:w});}}>
               <div className="card-header">
@@ -2146,13 +2190,10 @@ function App(){
               {show&&<div className="card-stat"><span style={{width:10,height:10,borderRadius:"50%",background:show.color,display:"inline-block"}}/> {show.name}</div>}
               <div className="win-loss"><span className="wins">{rec.wins}W</span><span className="losses">{rec.losses}L</span><span style={{color:"var(--text-muted)"}}>{winPct}%</span></div>
               <div className="record-bar"><div className="win-bar" style={{width:(rec.total>0?rec.wins/rec.total*100:0)+"%"}}/><div className="loss-bar" style={{width:(rec.total>0?rec.losses/rec.total*100:0)+"%"}}/></div>
-              {champs.length>0&&<div style={{marginTop:8}}>{champs.map(c=><span key={c.id} className="card-badge badge-champion"><i className="fas fa-trophy"/> {c.name}</span>)}</div>}
+              {allChamps.length>0&&<div style={{marginTop:8}}>{allChamps.map(c=><span key={c.id} className="card-badge badge-champion"><i className="fas fa-trophy"/> {c.name}</span>)}</div>}
             </div>);
           })}
         </div>:<div className="empty-state"><i className="fas fa-user-plus"/><p>No wrestlers found.</p></div>}
-      </div>
-    );
-  };
 
   const Shows=({editMode})=>{
     let list=[...state.shows];
@@ -2368,11 +2409,13 @@ function App(){
       {ranked.length?<div className="ranking-list">
         {ranked.map((w,i)=>{
           const rec=getRecord(w.id,state.matches);const rating=getPowerRating(w.id,state);const streak=getStreak(w.id,state.matches);const champs=getCurrentChampionships(w.id,state.championships);
+          const tagChamps=sa(state.championships).filter(c=>{if(c.type!=="tag"||!c.currentHolderId)return false;const t=state.tagTeams.find(x=>x.id===c.currentHolderId);return t&&getGroupMembers(t).includes(w.id);});
+          const allChamps=[...champs,...tagChamps];
           return(<div key={w.id} className="ranking-item" style={{cursor:"pointer",borderLeft:i===1?"3px solid #C0C0C0":i===2?"3px solid #CD7F32":""}} onClick={()=>setProfileModal({type:"wrestler",data:w})}>
             <div className="rank-number" style={{color:i===0?"var(--accent)":i===1?"#C0C0C0":i===2?"#CD7F32":"var(--text-muted)"}}>{i+1}</div>
             <div className="card-avatar-sm">{w.image?<img src={w.image} alt="" style={{width:"100%",height:"100%",objectFit:"cover"}}/>:<span className="card-avatar-placeholder" style={{fontSize:14}}><i className="fas fa-user"/></span>}</div>
             <div className="rank-info">
-              <div className="rank-name">{w.name}{champs.map(c=><i key={c.id} className="fas fa-trophy rank-champ-icon" title={c.name}/>)}</div>
+              <div className="rank-name">{w.name}{allChamps.map(c=><i key={c.id} className="fas fa-trophy rank-champ-icon" title={c.name}/>)}</div>
               <div className="rank-stats"><span className="badge-win">{rec.wins}W</span> <span className="badge-loss">{rec.losses}L</span> <span>{Math.round(rec.pct*100)}%</span>
                 {streak!==0&&<span style={{color:streak>0?"var(--success)":"var(--error)"}}>{streak>0?`🔥${streak}W Streak`:`❌${Math.abs(streak)}L Streak`}</span>}
               </div>
