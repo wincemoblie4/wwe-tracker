@@ -536,8 +536,6 @@ function MatchModal({match,state,onSave,onClose,toast}){
   const [matchType,setMatchType]=useState(match?.matchType||"singles");
   const [selWrestlers,setSelWrestlers]=useState(()=>{
     if(!match)return[];
-    // Don't pre-populate for tag matches — wrestlers array contains all member IDs from all teams
-    const mt0=match.matchType;
     const isTagMatch=match.tagTeamIds&&match.tagTeamIds.length>0;
     if(isTagMatch)return[];
     return match.wrestlers||[];
