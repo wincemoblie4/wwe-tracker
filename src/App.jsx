@@ -2192,6 +2192,9 @@ function App(){
             </div>);
           })}
         </div>:<div className="empty-state"><i className="fas fa-user-plus"/><p>No wrestlers found.</p></div>}
+      </div>
+    );
+  };
 
   const Shows=({editMode})=>{
     let list=[...state.shows];
